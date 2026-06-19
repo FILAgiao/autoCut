@@ -13,10 +13,15 @@ function initPlayer() {
       _player.currentTime = _segmentLoop.start;
       _player.play().catch(() => {});
     }
+    // 更新编辑模式字幕 Canvas（在 app.js 中定义）
+    if (typeof updateEditorSubtitle === 'function') {
+      updateEditorSubtitle();
+    }
   });
 
   _player.addEventListener('loadedmetadata', () => {
     if (typeof drawTimeline === 'function') drawTimeline();
+    if (typeof updateEditorSubtitle === 'function') updateEditorSubtitle();
   });
 
   // 双击全屏
@@ -26,6 +31,26 @@ function initPlayer() {
       document.exitFullscreen();
     } else {
       _player.requestFullscreen();
+    }
+  });
+
+  // seek 时更新字幕
+  _player.addEventListener('seeked', () => {
+    if (typeof updateEditorSubtitle === 'function') {
+      updateEditorSubtitle();
+    }
+  });
+
+  // 暂停时保持字幕
+  _player.addEventListener('pause', () => {
+    if (typeof updateEditorSubtitle === 'function') {
+      updateEditorSubtitle();
+    }
+  });
+
+  _player.addEventListener('play', () => {
+    if (typeof updateEditorSubtitle === 'function') {
+      updateEditorSubtitle();
     }
   });
 
@@ -43,7 +68,6 @@ function playSegment(start, end) {
 function togglePlay() {
   if (!_player) return;
 
-  // 如果没在循环模式，先设定当前句的片段范围
   if (!_segmentLoop) {
     const sent = STATE.sentences[STATE.currentSentence];
     if (sent && sent.takes[STATE.currentTakeIndex]) {
@@ -53,7 +77,6 @@ function togglePlay() {
   }
 
   if (_player.paused) {
-    // 如果当前不在循环范围内，seek 到循环开始
     if (_segmentLoop &&
         (_player.currentTime < _segmentLoop.start || _player.currentTime >= _segmentLoop.end)) {
       _player.currentTime = _segmentLoop.start;
@@ -73,7 +96,7 @@ function playCurrentTake() {
 
 function seekTo(time) {
   if (!_player) return;
-  _segmentLoop = null;  // 手动 seek 时取消循环
+  _segmentLoop = null;
   _player.currentTime = time;
 }
 
@@ -84,4 +107,11 @@ function stopLoop() {
 
 function getPlayer() {
   return _player;
+}
+
+/* ──── Canvas 字幕叠加辅助 ──── */
+function updateSubtitleCanvas() {
+  if (typeof updateEditorSubtitle === 'function') {
+    updateEditorSubtitle();
+  }
 }

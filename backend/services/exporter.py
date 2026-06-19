@@ -6,12 +6,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from backend.config import settings
-from backend.models.schemas import ProcessResult, ScriptSentence
+from backend.models.schemas import ProcessResult, ScriptSentence, SubtitleStyle
 
 
 # ──── 剪映草稿导出 ────
 
-def export_jianying_draft(result: ProcessResult, video_path: str) -> str:
+def export_jianying_draft(result: ProcessResult, video_path: str, subtitle_style: SubtitleStyle | None = None) -> str:
     """
     生成剪映草稿文件夹
 
@@ -21,6 +21,7 @@ def export_jianying_draft(result: ProcessResult, video_path: str) -> str:
 
     返回: 草稿文件夹路径
     """
+    style = subtitle_style or SubtitleStyle()
     confirmed = _get_confirmed_sorted(result)
 
     try:
@@ -54,12 +55,12 @@ def export_jianying_draft(result: ProcessResult, video_path: str) -> str:
         script.add_track(draft.Track_type.text, track_name="字幕")
 
         # 字幕样式
-        color = settings.SUBTITLE_COLOR
-        stroke_color = settings.SUBTITLE_STROKE_COLOR
-        stroke_width = settings.SUBTITLE_STROKE_WIDTH
-        font = settings.SUBTITLE_FONT
-        max_chars = settings.SUBTITLE_MAX_CHARS
-        pos_y = settings.SUBTITLE_POSITION_Y
+        color = _hex_to_rgb(style.color)
+        stroke_color = _hex_to_rgb(style.stroke_color)
+        stroke_width = style.stroke_width
+        font = style.font
+        max_chars = style.max_chars
+        pos_y = style.position_y
 
         text_style = draft.Text_style(
             font=font,
@@ -126,13 +127,14 @@ def export_jianying_draft(result: ProcessResult, video_path: str) -> str:
 
     except ImportError:
         # pyJianYingDraft 未安装时，生成一个最小可用草稿 JSON
-        return _export_minimal_draft(result, video_path)
+        return _export_minimal_draft(result, video_path, subtitle_style)
 
 
-def _export_minimal_draft(result: ProcessResult, video_path: str) -> str:
+def _export_minimal_draft(result: ProcessResult, video_path: str, subtitle_style: SubtitleStyle | None = None) -> str:
     """降级方案：生成最小可用的剪映草稿 JSON（无需 pyJianYingDraft）"""
     import json
     import shutil
+    style = subtitle_style or SubtitleStyle()
 
     confirmed = _get_confirmed_sorted(result)
     w, h = settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT
@@ -166,7 +168,7 @@ def _export_minimal_draft(result: ProcessResult, video_path: str) -> str:
     subtitle_segments = []
     subtitle_time = 0.0
     subtitle_id = 0
-    max_chars = settings.SUBTITLE_MAX_CHARS
+    max_chars = style.max_chars
 
     for sent in confirmed:
         take = sent.takes[sent.confirmed_take_index]
@@ -181,13 +183,13 @@ def _export_minimal_draft(result: ProcessResult, video_path: str) -> str:
                 "target_start": subtitle_time,
                 "target_end": subtitle_time + sub_duration,
                 "style": {
-                    "font": settings.SUBTITLE_FONT,
-                    "font_size": int(h * settings.SUBTITLE_SIZE_RATIO),
-                    "color": list(settings.SUBTITLE_COLOR),
-                    "stroke_color": list(settings.SUBTITLE_STROKE_COLOR),
-                    "stroke_width": settings.SUBTITLE_STROKE_WIDTH,
+                    "font": style.font,
+                    "font_size": int(h * style.font_size_ratio),
+                    "color": _hex_to_rgb_list(style.color),
+                    "stroke_color": _hex_to_rgb_list(style.stroke_color),
+                    "stroke_width": style.stroke_width,
                     "align": 1,
-                    "position_y": settings.SUBTITLE_POSITION_Y,
+                    "position_y": style.position_y,
                 },
             })
             subtitle_time += sub_duration
@@ -307,3 +309,17 @@ def _srt_time(seconds: float) -> str:
     s = int(seconds % 60)
     ms = int((seconds % 1) * 1000)
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def _hex_to_rgb(hex_color: str) -> tuple[float, ...]:
+    """#FFFFFF → (1.0, 1.0, 1.0)"""
+    hex_color = hex_color.lstrip("#")
+    r = int(hex_color[0:2], 16) / 255.0
+    g = int(hex_color[2:4], 16) / 255.0
+    b = int(hex_color[4:6], 16) / 255.0
+    return (r, g, b)
+
+
+def _hex_to_rgb_list(hex_color: str) -> list[float]:
+    """#FFFFFF → [1.0, 1.0, 1.0]"""
+    return list(_hex_to_rgb(hex_color))

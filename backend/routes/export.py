@@ -9,17 +9,28 @@ from fastapi import APIRouter
 from fastapi.responses import FileResponse, JSONResponse
 
 from backend.config import settings
-from backend.models.schemas import ProcessResult
+from backend.models.schemas import ProcessResult, SubtitleStyle
 from backend.routes.upload import get_task
 
 router = APIRouter()
 
 
 @router.get("/export/{task_id}/draft")
-async def export_draft(task_id: str):
+async def export_draft(
+    task_id: str,
+    font: str = "Source Han Sans SC",
+    fontSizeRatio: float = 0.08,
+    color: str = "FFFFFF",
+    strokeColor: str = "000000",
+    strokeWidth: float = 0.04,
+    positionY: float = -0.75,
+    keywordColor: str = "FFD700",
+    maxChars: int = 12,
+):
     """导出剪映草稿文件（ZIP 包）。
 
     如果用户未手动确认，自动为每句选择最佳 take（A级优先，不选废片）。
+    可通过查询参数传入字幕样式覆盖。
     """
     task = get_task(task_id)
     if not task or not task.get("result"):
@@ -27,12 +38,22 @@ async def export_draft(task_id: str):
 
     result: ProcessResult = task["result"]
 
-    # 自动选择最佳 take（如果用户未确认）
     _auto_confirm_best(result)
+
+    subtitle_style = SubtitleStyle(
+        font=font,
+        font_size_ratio=fontSizeRatio,
+        color=f"#{color}",
+        stroke_color=f"#{strokeColor}",
+        stroke_width=strokeWidth,
+        position_y=positionY,
+        keyword_color=f"#{keywordColor}",
+        max_chars=maxChars,
+    )
 
     try:
         from backend.services.exporter import export_jianying_draft
-        draft_dir = export_jianying_draft(result, task["video_path"])
+        draft_dir = export_jianying_draft(result, task["video_path"], subtitle_style)
 
         # 打包为 ZIP
         output_dir = Path(settings.OUTPUT_DIR)

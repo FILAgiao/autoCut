@@ -83,12 +83,26 @@ class AnalyzerResult(BaseModel):
     details: dict = {}
 
 
+# ──── 字幕样式 ────
+
+class SubtitleStyle(BaseModel):
+    font: str = "Source Han Sans SC"
+    font_size_ratio: float = 0.08
+    color: str = "#FFFFFF"
+    stroke_color: str = "#000000"
+    stroke_width: float = 0.04
+    position_y: float = -0.75
+    keyword_color: str = "#FFD700"
+    max_chars: int = 12
+
+
 # ──── 导出请求 ────
 
 class ExportOptions(BaseModel):
     include_srt: bool = True
     include_draft: bool = True
     include_text_guide: bool = False
+    subtitle_style: SubtitleStyle | None = None
 
 
 # ──── 状态 ────
