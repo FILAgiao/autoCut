@@ -82,8 +82,8 @@ function truncate(text, maxLen) {
 }
 
 function gradeToIcon(grade) {
-  const icons = { A: '🟢', B: '🟡', C: '🟠', D: '🔴', '废': '💀' };
-  return icons[grade] || '⬜';
+  const icons = { A: 'A', B: 'B', C: 'C', D: 'D', '废': '&#10005;' };
+  return icons[grade] || '?';
 }
 
 function gradeToCSS(grade) {
@@ -124,7 +124,7 @@ function renderScriptList() {
   const list = document.getElementById('script-list');
   if (!list) return;
   if (!STATE.sentences.length) {
-    list.innerHTML = '<div style="padding:16px;color:var(--text-dim);font-size:13px">无脚本或聚类结果，请在右侧查看未匹配片段</div>';
+    list.innerHTML = '<div style="padding:16px;color:var(--text-dim);font-size:13px;">无脚本数据，请在右侧查看未匹配片段</div>';
     return;
   }
   list.innerHTML = STATE.sentences.map((s, i) => {
@@ -139,7 +139,7 @@ function renderScriptList() {
     ].join(' ');
     const gradeColor = gradeToCSS(grade);
     const dot = grade ? `<span class="script-gradedot" style="background:${gradeColor}"></span>` : '';
-    const noTakesIcon = s.takes.length === 0 ? ' ⚠' : '';
+    const noTakesIcon = s.takes.length === 0 ? ' !' : '';
     return `<div class="${cls}" data-index="${i}" onclick="selectSentence(${i})">
       ${dot}${truncate(s.text, 20)}${noTakesIcon}
     </div>`;
@@ -154,7 +154,7 @@ function renderTakesList() {
   if (!list) return;
 
   if (!sent.takes.length) {
-    list.innerHTML = '<div style="padding:16px;color:var(--text-dim)">⚠ 录音中未找到对应片段</div>';
+    list.innerHTML = '<div style="padding:16px;color:var(--text-dim);font-size:13px;">未找到对应片段</div>';
     return;
   }
 

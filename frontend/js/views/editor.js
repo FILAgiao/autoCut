@@ -20,10 +20,10 @@ function renderIdleMode(project, container) {
   container.innerHTML = `
     <div id="editor-idle">
       <div class="upload-card">
-        <h2><span class="card-icon">🎥</span> 上传视频</h2>
+        <h2><span class="card-icon">&#9678;</span> 上传视频</h2>
         <div class="drop-zone" id="video-drop-zone">
           <input type="file" id="video-input" accept="video/*" hidden>
-          <span class="drop-icon">📁</span>
+          <span class="drop-icon">&#8682;</span>
           <span>拖拽视频到此处，或 <a href="#" id="video-browse">点击选择</a></span>
           <span class="hint" style="margin-top:4px;">支持 MP4 / MOV / AVI，最大 500MB</span>
         </div>
@@ -35,7 +35,7 @@ function renderIdleMode(project, container) {
         </div>
       </div>
       <div class="upload-card">
-        <h2><span class="card-icon">📝</span> 口播脚本 <span class="optional-badge">可选</span></h2>
+        <h2><span class="card-icon">&#9776;</span> 口播脚本 <span class="optional-badge">可选</span></h2>
         <textarea id="script-input" placeholder="一句一行，例如：&#10;大家好我是小飞&#10;今天给大家分享一个好东西&#10;&#10;不填则自动从语音中检测聚类相似的片段" rows="10">${escapeHtml(project.script || '')}</textarea>
         <span class="hint"><span id="script-line-count">0 句</span></span>
       </div>
@@ -48,7 +48,7 @@ function renderIdleMode(project, container) {
   if (project.clips && project.clips.length) {
     const list = document.getElementById('clips-list');
     list.innerHTML = project.clips.map(c =>
-      `<div class="clip-item">📹 ${escapeHtml(c.original_name || c.filename)}</div>`
+      `<div class="clip-item">&#9678; ${escapeHtml(c.original_name || c.filename)}</div>`
     ).join('');
   }
 
@@ -242,9 +242,9 @@ function renderEditorMode(project, container) {
             <span id="take-tags"></span>
           </div>
           <div id="take-actions">
-            <button id="btn-play" title="Space">▶ 播放此段</button>
-            <button id="btn-confirm" title="Enter">✓ 确认</button>
-            <button id="btn-reject" title="R">✕ 拒掉</button>
+            <button id="btn-play" title="Space">&#9654; 播放此段</button>
+            <button id="btn-confirm" title="Enter">&#10003; 确认</button>
+            <button id="btn-reject" title="R">&#10005; 拒掉</button>
           </div>
         </main>
         <aside id="takes-panel">
@@ -252,7 +252,7 @@ function renderEditorMode(project, container) {
           <div id="current-sentence-label"></div>
           <div id="takes-list"></div>
           <div id="unmatched-panel" class="hidden">
-            <h3>── 未匹配片段 ──</h3>
+            <h3>未匹配片段</h3>
             <div id="unmatched-list"></div>
           </div>
         </aside>

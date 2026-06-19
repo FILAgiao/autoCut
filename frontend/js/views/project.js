@@ -17,21 +17,21 @@ async function renderProject(projectId) {
     const app = document.getElementById('app');
     app.innerHTML = `
       <header id="top-bar">
-        <button id="btn-back" class="btn-back" title="返回">← 返回</button>
+        <button id="btn-back" class="btn-back" title="返回">&#8592; 返回</button>
         <span class="logo">${escapeHtml(project.name)}</span>
         <span id="progress-text">${project.task_status === 'idle' ? '待处理' : project.task_status === 'done' ? '已处理' : '处理中...'}</span>
         <div id="top-actions">
-          <button id="btn-theme" title="切换主题">${(localStorage.getItem('autocut-theme') || 'dark') === 'dark' ? '🌙' : '☀️'}</button>
+          <button id="btn-theme" title="切换主题">${(localStorage.getItem('autocut-theme') || 'dark') === 'dark' ? '暗' : '亮'}</button>
         </div>
       </header>
       <div id="project-layout">
         <aside id="sidebar">
           <nav id="sidebar-nav">
             <div class="sidebar-item ${_currentTab === 'editor' ? 'active' : ''}" data-tab="editor">
-              <span class="sidebar-icon">✂️</span> 编辑
+              <span class="sidebar-icon">&#9776;</span> 编辑
             </div>
             <div class="sidebar-item ${_currentTab === 'export' ? 'active' : ''}" data-tab="export">
-              <span class="sidebar-icon">📤</span> 导出
+              <span class="sidebar-icon">&#8593;</span> 导出
             </div>
           </nav>
         </aside>

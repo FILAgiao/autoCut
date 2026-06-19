@@ -26,9 +26,9 @@ function renderExport(project, container) {
           </div>
           <div class="subtitle-field">
             <label>字号比例</label>
-            <div style="display:flex;align-items:center;gap:10px;">
-              <input type="range" id="sub-font-size" min="0.04" max="0.16" step="0.01" value="${s.fontSizeRatio}" style="flex:1;">
-              <span id="sub-font-size-val" style="font-size:12px;color:var(--text-dim);min-width:36px;text-align:right;font-weight:500;">${s.fontSizeRatio}</span>
+            <div class="range-row">
+              <input type="range" id="sub-font-size" min="0.04" max="0.16" step="0.01" value="${s.fontSizeRatio}">
+              <span id="sub-font-size-val" class="range-value">${s.fontSizeRatio}</span>
             </div>
           </div>
           <div class="subtitle-field">
@@ -62,9 +62,9 @@ function renderExport(project, container) {
           </div>
           <div class="subtitle-field">
             <label>每行最大字数</label>
-            <div style="display:flex;align-items:center;gap:10px;">
-              <input type="range" id="sub-max-chars" min="8" max="24" step="1" value="${s.maxChars}" style="flex:1;">
-              <span id="sub-max-chars-val" style="font-size:12px;color:var(--text-dim);min-width:40px;text-align:right;font-weight:500;">${s.maxChars} 字</span>
+            <div class="range-row">
+              <input type="range" id="sub-max-chars" min="8" max="24" step="1" value="${s.maxChars}">
+              <span id="sub-max-chars-val" class="range-value">${s.maxChars} 字</span>
             </div>
           </div>
         </div>

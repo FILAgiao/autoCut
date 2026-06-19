@@ -7,7 +7,7 @@ async function renderHome() {
       <span class="logo">AutoCut</span>
       <span id="progress-text"></span>
       <div id="top-actions">
-        <button id="btn-theme" title="切换主题">${(localStorage.getItem('autocut-theme') || 'dark') === 'dark' ? '🌙' : '☀️'}</button>
+        <button id="btn-theme" title="切换主题">${(localStorage.getItem('autocut-theme') || 'dark') === 'dark' ? '暗' : '亮'}</button>
       </div>
     </header>
     <section id="home-area">
@@ -53,7 +53,7 @@ async function renderHome() {
     const btn = document.getElementById('btn-theme');
     if (btn) {
       const theme = document.documentElement.getAttribute('data-theme') || 'dark';
-      btn.textContent = theme === 'light' ? '☀️' : '🌙';
+      btn.textContent = theme === 'light' ? '亮' : '暗';
     }
   };
 }
@@ -68,13 +68,13 @@ async function loadProjectList() {
 
     if (!projects.length) {
       grid.innerHTML = `
-        <div class="project-card project-card-new" onclick="showNewProjectModal()" style="grid-column: 1 / -1;">
-          <div class="project-card-icon">＋</div>
+        <div class="project-card project-card-new" onclick="showNewProjectModal()">
+          <div class="project-card-icon">+</div>
           <div class="project-card-name">新建项目</div>
-          <div class="project-card-meta">上传视频开始剪辑</div>
+          <div class="project-card-meta">上传视频，开始剪辑</div>
         </div>
         <div class="empty-state">
-          <div class="empty-icon">🎬</div>
+          <div class="empty-icon">&#9678;</div>
           <p>还没有项目</p>
           <p class="empty-hint">点击上方卡片或「新建项目」开始剪辑你的口播视频</p>
         </div>`;
@@ -89,7 +89,7 @@ async function loadProjectList() {
 
       return `
         <div class="project-card" data-id="${p.id}" onclick="openProject('${p.id}')">
-          <div class="project-card-icon">📹</div>
+          <div class="project-card-icon">&#9678;</div>
           <div class="project-card-name">${escapeHtml(p.name)}</div>
           <div class="project-card-meta">
             <span class="project-status ${statusCls}">${statusLabel}</span>
@@ -103,9 +103,9 @@ async function loadProjectList() {
     // Prepend "new project" card
     cards.unshift(`
       <div class="project-card project-card-new" onclick="showNewProjectModal()">
-        <div class="project-card-icon">＋</div>
+        <div class="project-card-icon">+</div>
         <div class="project-card-name">新建项目</div>
-        <div class="project-card-meta">上传视频开始剪辑</div>
+        <div class="project-card-meta">上传视频，开始剪辑</div>
       </div>`);
 
     grid.innerHTML = cards.join('');
