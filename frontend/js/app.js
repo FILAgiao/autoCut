@@ -76,6 +76,13 @@ function formatDuration(seconds) {
   return `${m}m${s}s`;
 }
 
+function formatFileSize(bytes) {
+  if (!bytes || bytes < 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 function truncate(text, maxLen) {
   if (!text) return '';
   return text.length > maxLen ? text.substring(0, maxLen) + '...' : text;

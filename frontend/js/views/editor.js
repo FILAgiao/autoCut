@@ -45,12 +45,9 @@ function renderIdleMode(project, container) {
     </div>
   `;
 
-  // Refresh clips list
+  // Refresh clips list with file info
   if (project.clips && project.clips.length) {
-    const list = document.getElementById('clips-list');
-    list.innerHTML = project.clips.map(c =>
-      `<div class="clip-item">&#9678; ${escapeHtml(c.original_name || c.filename)}</div>`
-    ).join('');
+    renderClipsList(project.clips);
   }
 
   // Upload handlers
@@ -123,6 +120,48 @@ function handleEditorVideoFile(file) {
   checkEditorStartReady();
 }
 
+function renderClipsList(clips) {
+  const list = document.getElementById('clips-list');
+  if (!list) return;
+  list.innerHTML = clips.map(c => {
+    const sizeStr = c.file_size ? formatFileSize(c.file_size) : '';
+    const exists = c.exists !== false;
+    const durOk = c.duration > 0;
+    const statusIcon = !exists ? '&#10005;' : (durOk ? '&#10003;' : '&#9888;');
+    const statusCls = !exists ? 'clip-status-error' : (durOk ? 'clip-status-ok' : 'clip-status-warn');
+    const statusTitle = !exists ? '文件丢失' : (durOk ? '正常' : '时长异常');
+    return `<div class="clip-item">
+      <span class="clip-status ${statusCls}" title="${statusTitle}">${statusIcon}</span>
+      <span class="clip-name">${escapeHtml(c.original_name || c.filename)}</span>
+      ${sizeStr ? `<span class="clip-size">${sizeStr}</span>` : ''}
+      ${c.duration > 0 ? `<span class="clip-dur">${formatDuration(c.duration)}</span>` : ''}
+      <button class="clip-delete" data-clip-id="${escapeHtml(c.id)}" title="删除此片段">&#10005;</button>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('.clip-delete').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const clipId = btn.dataset.clipId;
+      await deleteEditorClip(clipId);
+    });
+  });
+}
+
+async function deleteEditorClip(clipId) {
+  try {
+    const resp = await fetch(`/api/projects/${_currentProjectId}/clips/${clipId}`, { method: 'DELETE' });
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.error || '删除失败');
+    }
+    await renderProject(_currentProjectId);
+  } catch (err) {
+    const statusEl = document.getElementById('upload-status');
+    if (statusEl) statusEl.innerHTML = `<span style="color:var(--error)">删除失败: ${err.message}</span>`;
+  }
+}
+
 function checkEditorStartReady() {
   const btn = document.getElementById('btn-start');
   if (!btn) return;
@@ -155,10 +194,12 @@ async function startEditorProcessing() {
       body: JSON.stringify({ script }),
     });
 
-    // Upload clip with progress
+    // Upload clip with progress and error handling
+    statusEl.textContent = '上传视频...';
     const formData = new FormData();
     formData.append('video', file);
-    const uploadResp = await new Promise((resolve, reject) => {
+
+    const uploadResult = await new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', `/api/projects/${_currentProjectId}/clips`);
       xhr.upload.onprogress = (e) => {
@@ -168,23 +209,39 @@ async function startEditorProcessing() {
         }
       };
       xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          resolve({ ok: true, status: xhr.status, json: () => JSON.parse(xhr.responseText) });
-        } else {
-          let detail;
-          try { detail = JSON.parse(xhr.responseText); } catch (_) {}
-          reject(new Error((detail && (detail.detail || detail.error)) || '上传失败'));
+        try {
+          const data = JSON.parse(xhr.responseText);
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(data);
+          } else {
+            reject(new Error(data.error || data.detail || `上传失败 (${xhr.status})`));
+          }
+        } catch (_) {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve({});
+          } else {
+            reject(new Error(`服务器错误 (${xhr.status})`));
+          }
         }
       };
-      xhr.onerror = () => reject(new Error('上传失败'));
+      xhr.onerror = () => reject(new Error('上传失败，请检查网络'));
+      xhr.ontimeout = () => reject(new Error('上传超时，请重试'));
       xhr.send(formData);
     });
-    if (!uploadResp.ok) {
-      const err = await uploadResp.json();
-      throw new Error(err.detail || err.error || '上传失败');
+
+    // Post-upload: re-fetch project to verify clip was saved correctly
+    statusEl.textContent = '校验视频文件...';
+    const checkResp = await fetch(`/api/projects/${_currentProjectId}`);
+    if (!checkResp.ok) throw new Error('获取项目信息失败');
+    const projectData = await checkResp.json();
+    const savedClips = projectData.clips || [];
+    const savedClip = savedClips.find(c =>
+      c.original_name === file.name || c.filename === uploadResult.filename
+    );
+    if (!savedClip) {
+      throw new Error('视频片段未正确保存，请重新上传');
     }
 
-    statusEl.textContent = '上传视频完成';
     statusEl.innerHTML = '<span class="status-dot status-processing"></span>启动处理...';
 
     // Start processing

@@ -51,13 +51,17 @@ async def get_project_detail(project_id: str):
     if not project:
         return JSONResponse({"error": "项目不存在"}, status_code=404)
 
+    clips = project.get("clips", [])
+    for clip in clips:
+        clip["exists"] = store.clip_exists(project_id, clip["filename"])
+
     response = {
         "id": project["id"],
         "name": project["name"],
         "script": project.get("script", ""),
         "created_at": project.get("created_at", ""),
         "updated_at": project.get("updated_at", ""),
-        "clips": project.get("clips", []),
+        "clips": clips,
         "task_id": project.get("task_id", project["id"]),
         "task_status": project.get("task_status", "idle"),
         "confirmed_count": project.get("confirmed_count", 0),
@@ -122,10 +126,39 @@ async def upload_clip(project_id: str, video: UploadFile = File(...)):
 
 @router.get("/projects/{project_id}/clips/{clip_id}")
 async def get_clip_video(project_id: str, clip_id: str):
-    path = store.get_clip_path(project_id, clip_id)
-    if not path:
+    project = store.get_project(project_id)
+    if not project:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+    clip = next((c for c in project.get("clips", []) if c["id"] == clip_id), None)
+    if not clip:
         return JSONResponse({"error": "视频片段不存在"}, status_code=404)
+    path = store.get_clip_path(project_id, clip["filename"])
+    if not path:
+        return JSONResponse({"error": "视频片段文件不存在"}, status_code=404)
     return FileResponse(str(path))
+
+
+@router.delete("/projects/{project_id}/clips/{clip_id}")
+async def delete_clip(project_id: str, clip_id: str):
+    """删除项目中的视频片段"""
+    project = store.get_project(project_id)
+    if not project:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+
+    clips = project.get("clips", [])
+    clip = next((c for c in clips if c["id"] == clip_id), None)
+    if not clip:
+        return JSONResponse({"error": "视频片段不存在"}, status_code=404)
+
+    # Delete file from disk
+    clip_path = store.get_clip_path(project_id, clip["filename"])
+    if clip_path and clip_path.exists():
+        clip_path.unlink()
+
+    # Remove from project
+    clips = [c for c in clips if c["id"] != clip_id]
+    store.update_project(project_id, clips=clips)
+    return {"status": "ok"}
 
 
 # ═══════════════════════════════════════════
@@ -144,6 +177,11 @@ async def start_processing(project_id: str, background_tasks: BackgroundTasks):
     print(f"[start_processing] clips count: {len(clips)}")
     if not clips:
         return JSONResponse({"error": "请先上传视频片段"}, status_code=400)
+
+    for clip in clips:
+        clip_path = store.get_clip_path(project_id, clip["filename"])
+        if not clip_path:
+            return JSONResponse({"error": f"视频文件 {clip.get('original_name', clip['filename'])} 不存在，请重新上传"}, status_code=400)
 
     project["task_status"] = "processing"
     store.update_project(project_id, task_status="processing", error=None)
@@ -211,8 +249,8 @@ async def run_pipeline(project_id: str):
 
         # 获取第一个片段路径
         video_path = store.get_first_clip_path(project_id)
-        if not video_path:
-            raise RuntimeError("找不到视频文件")
+        if not video_path or not video_path.exists():
+            raise RuntimeError("找不到视频文件或文件已损坏")
 
         video_path_str = str(video_path.resolve())
 

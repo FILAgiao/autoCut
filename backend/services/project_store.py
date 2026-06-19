@@ -126,7 +126,8 @@ def save_clip(project_id: str, filename: str, content: bytes, original_name: str
         "id": clip_id,
         "filename": clip_filename,
         "original_name": original_name or filename,
-        "duration": 0,  # 后续处理时更新
+        "duration": 0,
+        "file_size": len(content),
     }
 
     # 追加到 project
@@ -139,17 +140,16 @@ def save_clip(project_id: str, filename: str, content: bytes, original_name: str
     return clip_info
 
 
-def get_clip_path(project_id: str, clip_id: str) -> Path | None:
-    """获取视频片段文件路径"""
-    project = _read_project_json(project_id)
-    if not project:
-        return None
-    for clip in project.get("clips", []):
-        if clip["id"] == clip_id:
-            p = _project_dir(project_id) / "clips" / clip["filename"]
-            if p.exists():
-                return p
-    return None
+def get_clip_path(project_id: str, filename: str) -> Path | None:
+    """通过文件名获取 clips/ 下的完整路径（检查文件真实存在）"""
+    p = _project_dir(project_id) / "clips" / filename
+    return p if p.exists() else None
+
+
+def clip_exists(project_id: str, filename: str) -> bool:
+    """检查 clips/ 下的文件是否真实存在"""
+    path = _project_dir(project_id) / "clips" / filename
+    return path.exists() and path.is_file()
 
 
 def get_first_clip_path(project_id: str) -> Path | None:
@@ -160,7 +160,7 @@ def get_first_clip_path(project_id: str) -> Path | None:
     clips = project.get("clips", [])
     if not clips:
         return None
-    return get_clip_path(project_id, clips[0]["id"])
+    return get_clip_path(project_id, clips[0]["filename"])
 
 
 def get_export_dir(project_id: str) -> Path:
