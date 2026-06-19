@@ -36,8 +36,8 @@ function renderIdleMode(project, container) {
       </div>
       <div class="upload-card">
         <h2><span class="card-icon">&#9776;</span> 口播脚本 <span class="optional-badge">可选</span></h2>
-        <textarea id="script-input" placeholder="一句一行，例如：&#10;大家好我是小飞&#10;今天给大家分享一个好东西&#10;&#10;不填则自动从语音中检测聚类相似的片段" rows="10">${escapeHtml(project.script || '')}</textarea>
-        <span class="hint"><span id="script-line-count">0 句</span></span>
+        <textarea id="script-input" placeholder="粘贴口播脚本，支持段落格式，自动智能分句&#10;例如：&#10;大家好我是小飞。今天给大家分享一个好东西。这个功能真的很好用！" rows="10">${escapeHtml(project.script || '')}</textarea>
+        <span class="hint"><span id="script-line-count">0 句</span> <span style="color:var(--text-dim)">— 自动按句号/感叹号/问号分句</span></span>
       </div>
       <button id="btn-start" disabled>开始处理</button>
       <div id="upload-status"></div>
@@ -74,14 +74,16 @@ function renderIdleMode(project, container) {
   });
 
   scriptInput.addEventListener('input', () => {
-    const lines = scriptInput.value.trim().split('\n').filter(l => l.trim());
-    document.getElementById('script-line-count').textContent = `${lines.length} 句`;
+    const text = scriptInput.value.trim();
+    const lines = text ? text.split(/[。！？!?\n]+/).filter(l => l.trim()).length : 0;
+    document.getElementById('script-line-count').textContent = `${lines} 句`;
     checkEditorStartReady();
   });
 
   // Init script line count
-  const initLines = scriptInput.value.trim().split('\n').filter(l => l.trim());
-  document.getElementById('script-line-count').textContent = `${initLines.length} 句`;
+  const text = scriptInput.value.trim();
+  const initCount = text ? text.split(/[。！？!?\n]+/).filter(l => l.trim()).length : 0;
+  document.getElementById('script-line-count').textContent = `${initCount} 句`;
 
   btnStart.addEventListener('click', () => startEditorProcessing());
 

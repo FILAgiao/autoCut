@@ -194,7 +194,8 @@ async def run_pipeline(project_id: str):
 
         # Step 4: LLM 语义对齐 或 无脚本聚类
         store.update_project(project_id, task_status="aligning")
-        script_lines = [s.strip() for s in script_text.split("\n") if s.strip()]
+        from backend.services.script_parser import smart_split_script
+        script_lines = smart_split_script(script_text)
         scriptless = len(script_lines) == 0
         alignment = None
 
