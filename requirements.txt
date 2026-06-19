@@ -19,3 +19,4 @@ pyJianYingDraft
 python-dotenv>=1.0.0
 Levenshtein>=0.25.0
 aiofiles>=24.0.0
+websockets
