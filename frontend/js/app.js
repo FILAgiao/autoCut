@@ -80,15 +80,25 @@ function handleVideoFile(file) {
 
 function checkStartReady() {
   const hasVideo = !!window._selectedVideoFile;
-  const hasScript = document.getElementById('script-input').value.trim().length > 0;
-  document.getElementById('btn-start').disabled = !(hasVideo && hasScript);
+  document.getElementById('btn-start').disabled = !hasVideo;
+
+  // 更新模式提示
+  const scriptText = document.getElementById('script-input').value.trim();
+  const modeHint = document.getElementById('script-mode-hint');
+  if (!scriptText && hasVideo) {
+    modeHint.style.display = 'inline';
+    document.getElementById('btn-start').textContent = '开始处理（智能聚类）';
+  } else {
+    modeHint.style.display = 'none';
+    document.getElementById('btn-start').textContent = '开始处理';
+  }
 }
 
 async function startProcessing() {
   const file = window._selectedVideoFile;
   const script = document.getElementById('script-input').value;
 
-  if (!file || !script) return;
+  if (!file) return;
 
   STATE.status = 'processing';
   updateUI();
@@ -126,13 +136,18 @@ async function pollTaskStatus(taskId) {
       if (data.status === 'done') {
         // 加载结果
         STATE.status = 'editing';
-        STATE.sentences = data.sentences;
-        STATE.unmatched = data.unmatched;
-        STATE.totalCount = data.total_count;
-        STATE.confirmedCount = data.confirmed_count;
-        STATE.videoDuration = data.video_duration;
+        STATE.sentences = data.sentences || [];
+        STATE.unmatched = data.unmatched || [];
+        STATE.totalCount = data.total_count || STATE.sentences.length;
+        STATE.confirmedCount = data.confirmed_count || 0;
+        STATE.videoDuration = data.video_duration || 0;
         STATE.currentSentence = 0;
         STATE.currentTakeIndex = 0;
+
+        // 设置模式标签
+        const hasScript = document.getElementById('script-input').value.trim().length > 0;
+        document.getElementById('script-mode-label').textContent =
+          hasScript ? '脚本行（对齐模式）' : '检测到的内容（聚类模式）';
 
         // 设置视频源
         const video = document.getElementById('video-player');
@@ -165,7 +180,7 @@ function getStatusText(status) {
     uploading: '上传中...',
     extracting_audio: '提取音频中...',
     asr_processing: '语音识别中...',
-    aligning: '语义对齐中...',
+    aligning: '语义聚类中...',
     analyzing: '分析质量中...',
     done: '处理完成！',
   };
@@ -193,6 +208,10 @@ function renderAll() {
 
 function renderScriptList() {
   const list = document.getElementById('script-list');
+  if (!STATE.sentences.length) {
+    list.innerHTML = '<div style="padding:16px;color:var(--text-dim);font-size:13px">无脚本或聚类结果，请在右侧查看未匹配片段</div>';
+    return;
+  }
   list.innerHTML = STATE.sentences.map((s, i) => {
     const grade = s.confirmed_take_index >= 0
       ? s.takes[s.confirmed_take_index]?.grade || ''
@@ -200,12 +219,14 @@ function renderScriptList() {
     const cls = [
       'script-item',
       i === STATE.currentSentence ? 'current' : '',
-      s.confirmed_take_index >= 0 ? 'confirmed' : ''
+      s.confirmed_take_index >= 0 ? 'confirmed' : '',
+      s.takes.length === 0 ? 'no-takes' : ''
     ].join(' ');
     const gradeColor = gradeToCSS(grade);
     const dot = grade ? `<span class="script-gradedot" style="background:${gradeColor}"></span>` : '';
+    const noTakesIcon = s.takes.length === 0 ? ' ⚠' : '';
     return `<div class="${cls}" data-index="${i}" onclick="selectSentence(${i})">
-      ${dot}${truncate(s.text, 20)}
+      ${dot}${truncate(s.text, 20)}${noTakesIcon}
     </div>`;
   }).join('');
 }
@@ -217,7 +238,12 @@ function renderTakesList() {
   const list = document.getElementById('takes-list');
 
   if (!sent.takes.length) {
-    list.innerHTML = '<div style="padding:16px;color:var(--text-dim)">⚠ 录音中未找到对应片段</div>';
+    const isScriptless = STATE.sentences.length > 0 && STATE.sentences.every(s => s.takes.length === 0);
+    if (isScriptless) {
+      list.innerHTML = '<div style="padding:16px;color:var(--text-dim)">未检测到有效语音片段<br><small>视频可能没有声音，或语音内容过短</small></div>';
+    } else {
+      list.innerHTML = '<div style="padding:16px;color:var(--text-dim)">⚠ 录音中未找到对应片段<br><small>此句脚本在录音中可能没有讲到</small></div>';
+    }
     return;
   }
 
@@ -300,7 +326,7 @@ function updateProgress() {
   document.getElementById('progress-text').textContent =
     `已确认 ${count} / ${STATE.totalCount}`;
 
-  document.getElementById('btn-export').disabled = count === 0;
+  document.getElementById('btn-export').disabled = STATE.status !== 'editing';
   document.getElementById('btn-auto-confirm').disabled = STATE.status !== 'editing';
 }
 
@@ -314,11 +340,12 @@ function selectSentence(index) {
   if (sent.confirmed_take_index >= 0) {
     STATE.currentTakeIndex = sent.confirmed_take_index;
   } else {
-    STATE.currentTakeIndex = findBestTakeIndex(sent);
+    const best = findBestTakeIndex(sent);
+    STATE.currentTakeIndex = best >= 0 ? best : 0;
   }
 
   renderAll();
-  seekToCurrentTake();
+  if (sent.takes.length > 0) seekToCurrentTake();
 }
 
 function selectTake(index) {
@@ -331,7 +358,7 @@ function selectTake(index) {
 }
 
 function findBestTakeIndex(sent) {
-  if (!sent.takes.length) return 0;
+  if (!sent.takes.length) return -1;
   // 优先选 A 级的，其次 B，最后第一个非废片
   for (const grade of ['A', 'B', 'C']) {
     const idx = sent.takes.findIndex(t => t.grade === grade && !t.is_abandoned);
@@ -339,7 +366,9 @@ function findBestTakeIndex(sent) {
   }
   // 返回第一个非废片
   const idx = sent.takes.findIndex(t => !t.is_abandoned);
-  return idx >= 0 ? idx : 0;
+  if (idx >= 0) return idx;
+  // 全部是废片，返回第一个（用户需要手动处理）
+  return 0;
 }
 
 function jumpToFirstAvailable() {
@@ -348,6 +377,10 @@ function jumpToFirstAvailable() {
       selectSentence(i);
       return;
     }
+  }
+  // 所有句子都没有 takes：选中第一条展示空状态
+  if (STATE.sentences.length > 0) {
+    selectSentence(0);
   }
 }
 

@@ -176,6 +176,177 @@ class LLMAligner:
         return text.lower()
 
 
+# ──── 无脚本聚类 ────
+
+CLUSTER_PROMPT = """你是一个文本聚类专家。以下是一段口播视频的语音识别结果。说话人把同一句话重复讲了多次（因为口播需要录到满意为止）。请找出所有语义相同、重复讲述的句子，把它们聚类。
+
+【语音识别结果】（每个段落有编号、时间戳和文本）
+{asr_segments}
+
+任务：
+1. 找出所有表达相同内容、但可能已讲过多次的句子，将它们归为一组
+2. 每组代表"脚本中的一句话"，可能有多遍（takes）
+3. 按时间顺序排列各组（取最早的 take 时间）
+4. 任何不属于任何组的片段放入 unmatched
+5. 为每个组生成一句最合理的"规范版本文本"（取讲得最好、最完整的版本）
+
+返回严格的 JSON 格式，不要有其他文字：
+{{
+  "clusters": [
+    {{
+      "text": "规范版本文本",
+      "takes": [
+        {{"segment_index": 0, "confidence": 1.0}},
+        {{"segment_index": 3, "confidence": 0.9}}
+      ]
+    }}
+  ],
+  "unmatched": [5, 7]
+}}
+
+注意事项：
+- 语义相同但措辞不同也要归为一组（比如"这功能很好用"和"这个功能真的很好用"算同一组）
+- 一组可能只有一遍（只讲了一次），也可能有多遍（重复讲了多次）
+- confidence 表示这遍讲得有多好：1.0=完美，0.7以下=不太好
+- 不要把不同内容的句子归到一起"""
+
+
+class SegmentClusterer:
+    """无脚本模式：聚类相似 ASR 片段"""
+
+    def __init__(self):
+        self.api_base = settings.LLM_API_BASE
+        self.api_key = settings.LLM_API_KEY
+        self.model = settings.LLM_MODEL
+
+    @property
+    def is_available(self) -> bool:
+        return bool(self.api_key and self.model)
+
+    def cluster(self, asr_segments: list[dict]) -> dict:
+        """对 ASR 片段聚类，自动发现重复讲的内容"""
+        if not asr_segments:
+            return {"clusters": [], "unmatched": []}
+
+        if self.is_available:
+            try:
+                return self._llm_cluster(asr_segments)
+            except Exception as e:
+                print(f"LLM 聚类失败，降级到简易聚类: {e}")
+
+        return self._fallback_cluster(asr_segments)
+
+    def _llm_cluster(self, asr_segments: list[dict]) -> dict:
+        """使用 LLM 进行语义聚类"""
+        seg_lines = "\n".join(
+            f"[{i}] [{s['start']:.1f}s-{s['end']:.1f}s] conf={s.get('confidence', 0):.2f} {s['text']}"
+            for i, s in enumerate(asr_segments)
+        )
+        prompt = CLUSTER_PROMPT.format(asr_segments=seg_lines)
+
+        from openai import OpenAI
+        client = OpenAI(base_url=self.api_base, api_key=self.api_key)
+        resp = client.chat.completions.create(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+            max_tokens=4096,
+        )
+        content = resp.choices[0].message.content.strip()
+
+        if content.startswith("```"):
+            content = re.sub(r"^```\w*\n?", "", content)
+            content = re.sub(r"\n```$", "", content)
+
+        return json.loads(content)
+
+    def _fallback_cluster(self, asr_segments: list[dict]) -> dict:
+        """降级方案：基于文本相似度的简易聚类"""
+        threshold = 0.5
+        clusters = []
+        used = set()
+
+        for i, seg_a in enumerate(asr_segments):
+            if i in used:
+                continue
+            text_a = LLMAligner._normalize(seg_a.get("text", ""))
+            if len(text_a) < 3:
+                used.add(i)
+                continue
+
+            cluster = {"text": seg_a["text"], "takes": [
+                {"segment_index": i, "confidence": 1.0}
+            ]}
+            used.add(i)
+
+            for j, seg_b in enumerate(asr_segments):
+                if j in used:
+                    continue
+                text_b = LLMAligner._normalize(seg_b.get("text", ""))
+                if len(text_b) < 3:
+                    used.add(j)
+                    continue
+
+                ratio = levenshtein_ratio(text_a, text_b)
+                if ratio >= threshold:
+                    cluster["takes"].append({
+                        "segment_index": j,
+                        "confidence": round(ratio, 2),
+                    })
+                    used.add(j)
+
+            clusters.append(cluster)
+
+        return {"clusters": clusters, "unmatched": []}
+
+
+def cluster_result_to_model(
+    asr_segments: list[dict],
+    cluster_data: dict,
+) -> tuple:
+    """将聚类结果转换到数据模型"""
+    from backend.models.schemas import (
+        AnalyzedTake, ScriptSentence, UnmatchedSegment
+    )
+
+    clusters = cluster_data.get("clusters", [])
+    sentences = []
+    for ci, cluster in enumerate(clusters):
+        takes = []
+        for ti, take_info in enumerate(cluster.get("takes", [])):
+            seg_idx = take_info["segment_index"]
+            if seg_idx < len(asr_segments):
+                seg = asr_segments[seg_idx]
+                takes.append(AnalyzedTake(
+                    index=ti,
+                    text=seg["text"],
+                    start=seg["start"],
+                    end=seg["end"],
+                    duration=round(seg["end"] - seg["start"], 2),
+                    confidence=seg.get("confidence", 0.0),
+                ))
+        if takes:
+            sentences.append(ScriptSentence(
+                index=ci,
+                text=cluster.get("text", takes[0].text if takes else ""),
+                takes=takes,
+            ))
+
+    unmatched_indices = set(cluster_data.get("unmatched", []))
+    unmatched = []
+    for idx in unmatched_indices:
+        if idx < len(asr_segments):
+            seg = asr_segments[idx]
+            unmatched.append(UnmatchedSegment(
+                text=seg["text"],
+                start=seg["start"],
+                end=seg["end"],
+                confidence=seg.get("confidence", 0.0),
+            ))
+
+    return sentences, unmatched
+
+
 # ──── 便捷函数 ────
 
 def align_result_to_model(

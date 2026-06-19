@@ -1,173 +1,250 @@
-"""火山引擎豆包语音识别 - 录音文件识别标准版 (HTTP)
+"""火山引擎豆包语音识别 - 流式识别 (WebSocket)
 
-接口: POST https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit (提交任务)
-      POST https://openspeech.bytedance.com/api/v3/auc/bigmodel/query  (查询结果)
-鉴权: X-Api-App-Key / X-Api-Access-Key / X-Api-Resource-Id / X-Api-Request-Id
+接口: wss://openspeech.bytedance.com/api/v3/sauc/bigmodel
+协议: 火山引擎流式语音识别二进制协议 V3
+鉴权: X-Api-App-Key / X-Api-Access-Key / X-Api-Resource-Id / X-Api-Request-Id / X-Api-Sequence
 
-录音文件识别需要音频的公网 URL。可通过火山引擎 TOS 对象存储或本地 HTTP 服务 + ngrok 提供。
+无需公网 URL，直接读取本地音频文件流式上传。
 """
 
+import asyncio
 import json
-import time
+import gzip
+import struct
 import uuid
 import tempfile
 import subprocess
+import os
 
-import requests
+import websockets
 
 from backend.config import settings
 
+# ──── 协议常量 ────
+PROTOCOL_VERSION = 0b0001
+HEADER_SIZE      = 0b0001
+MSG_FULL_CLIENT_REQUEST = 0b0001
+MSG_AUDIO_ONLY_REQUEST  = 0b0010
+SERIALIZATION_JSON = 0b0001
+SERIALIZATION_NONE = 0b0000
+COMPRESSION_GZIP  = 0b0001
+COMPRESSION_NONE  = 0b0000
+FLAG_NO_SEQUENCE   = 0b0000  # 无序列号
+FLAG_HAS_SEQUENCE  = 0b0001  # 负载前 4 字节为序列号
+FLAG_NEG_SEQUENCE  = 0b0010  # 负序列号（-1 首包 / -2 末包）
+
+# ──── 资源配置 ────
+WS_URL     = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
+RESOURCE_ID = "volc.bigasr.sauc.duration"
+
 
 class VolcASRClient:
-    """火山引擎录音文件识别大模型客户端 (HTTP V3)"""
-
-    # 接口地址
-    SUBMIT_URL = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit"
-    QUERY_URL = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/query"
-
-    # 资源 ID - 豆包录音文件识别模型1.0
-    RESOURCE_ID = "volc.bigasr.auc"
+    """火山引擎流式语音识别客户端 (WebSocket)"""
 
     def __init__(self):
         self.app_id = settings.VOLC_APP_ID
         self.access_token = settings.VOLC_ACCESS_TOKEN
 
-    def _build_headers(self, request_id: str) -> dict:
-        return {
-            "X-Api-App-Key": self.app_id,
-            "X-Api-Access-Key": self.access_token,
-            "X-Api-Resource-Id": self.RESOURCE_ID,
-            "X-Api-Request-Id": request_id,
-            "Content-Type": "application/json",
-        }
+    @staticmethod
+    def _build_header(msg_type, compression=COMPRESSION_NONE,
+                      serialization=SERIALIZATION_JSON, flags=FLAG_NO_SEQUENCE):
+        return bytes([
+            (PROTOCOL_VERSION << 4) | HEADER_SIZE,
+            (msg_type << 4) | flags,
+            (serialization << 4) | compression,
+            0x00,
+        ])
+
+    @staticmethod
+    def _parse_response(raw):
+        """解析 WebSocket 二进制响应"""
+        if isinstance(raw, str):
+            raw = raw.encode()
+
+        hdr_size   = (raw[0] & 0x0F) * 4
+        msg_type   = (raw[1] >> 4) & 0x0F
+        flags      = raw[1] & 0x0F
+        compression = raw[2] & 0x0F
+        payload    = raw[hdr_size:]
+
+        if flags & 0x01:          # 跳过序列号
+            payload = payload[4:]
+
+        if msg_type == 0b1111:    # ERROR
+            code = struct.unpack('>I', payload[:4])[0]
+            size = struct.unpack('>I', payload[4:8])[0]
+            err  = payload[8:8 + size]
+            try:
+                err = json.loads(gzip.decompress(err))
+            except Exception:
+                pass
+            return {"type": "error", "code": code, "error": err}
+
+        if msg_type == 0b1001:    # SERVER_RESPONSE
+            size = struct.unpack('>I', payload[:4])[0]
+            data = payload[4:4 + size]
+            if compression == COMPRESSION_GZIP:
+                data = gzip.decompress(data)
+            return {"type": "response", "data": json.loads(data)}
+
+        return {"type": "unknown", "msg_type": msg_type}
 
     # ──── 主流程 ────
 
-    def submit_task(self, audio_url: str, language: str = "zh-CN") -> str:
-        """提交识别任务
+    async def recognize(self, audio_path: str) -> dict:
+        """流式识别音频文件
 
-        Args:
-            audio_url: 音频文件的公网可访问 URL
-            language: 语言代码，默认 zh-CN
+        将本地音频通过 WebSocket 流式发送到火山引擎进行语音识别，
+        无需公网 URL。
 
         Returns:
-            task_id: 用于后续查询的任务 ID
+            {"status": "success", "segments": [...], "full_text": "..."}
         """
-        task_id = str(uuid.uuid4())
+        wav_path = self.convert_to_wav(audio_path)
 
-        # 根据 URL 后缀推断音频格式
-        ext = audio_url.split("?")[0].split(".")[-1].lower()
-        fmt = "wav" if ext not in ("mp3", "ogg", "wav") else ext
+        with open(wav_path, 'rb') as f:
+            audio_data = f.read()
 
-        body = {
-            "user": {"uid": self.app_id},
-            "audio": {
-                "format": fmt,
-                "url": audio_url,
-                "language": language,
-            },
-            "request": {
-                "model_name": "bigmodel",
-                "enable_itn": True,
-                "enable_punc": True,
-                "show_utterances": True,
-            },
+        request_id = str(uuid.uuid4())
+        headers = {
+            "X-Api-App-Key":    self.app_id,
+            "X-Api-Access-Key": self.access_token,
+            "X-Api-Resource-Id": RESOURCE_ID,
+            "X-Api-Request-Id": request_id,
+            "X-Api-Sequence":   "-1",
         }
 
-        resp = requests.post(
-            self.SUBMIT_URL,
-            headers=self._build_headers(task_id),
-            json=body,
-            timeout=30,
-        )
-        resp.raise_for_status()
+        all_utterances = []
+        full_text = ""
 
-        status_code = resp.headers.get("X-Api-Status-Code", "")
-        status_msg = resp.headers.get("X-Api-Message", "")
-
-        if status_code != "20000000":
-            raise RuntimeError(f"提交 ASR 任务失败: [{status_code}] {status_msg}")
-
-        return task_id
-
-    def query_task(self, task_id: str) -> dict:
-        """查询识别结果
-
-        Returns:
-            {"status": "running" | "success" | "failed", ...}
-        """
-        resp = requests.post(
-            self.QUERY_URL,
-            headers=self._build_headers(task_id),
-            json={},
-            timeout=30,
-        )
-        resp.raise_for_status()
-
-        status_code = resp.headers.get("X-Api-Status-Code", "")
-
-        if status_code == "20000000":
-            data = resp.json()
-            result = data.get("result", {})
-            utterances = result.get("utterances", [])
-            full_text = result.get("text", "")
-
-            segments = []
-            for u in utterances:
-                text = u.get("text", "").strip()
-                if text:
-                    segments.append({
-                        "text": text,
-                        "start": u.get("start_time", 0) / 1000.0,  # ms → s
-                        "end": u.get("end_time", 0) / 1000.0,
-                        "confidence": 0.95,
-                        "definite": u.get("definite", False),
-                        "words": u.get("words", []),
-                    })
-
-            return {
-                "status": "success",
-                "segments": segments,
-                "full_text": full_text,
+        async with websockets.connect(
+            WS_URL,
+            additional_headers=headers,
+            ping_interval=20,
+            ping_timeout=10,
+            max_size=10 * 1024 * 1024,
+        ) as ws:
+            # ── 1. 发送元数据 ──
+            metadata = {
+                "user": {"uid": self.app_id},
+                "audio": {
+                    "format": "wav", "codec": "raw",
+                    "rate": 16000, "bits": 16, "channel": 1,
+                    "language": "zh-CN",
+                },
+                "request": {
+                    "model_name": "bigmodel",
+                    "enable_itn": True,
+                    "enable_punc": True,
+                    "show_utterances": True,
+                    "result_type": "full",
+                },
             }
+            payload = gzip.compress(json.dumps(metadata).encode())
+            header = self._build_header(
+                MSG_FULL_CLIENT_REQUEST,
+                compression=COMPRESSION_GZIP,
+                flags=FLAG_NO_SEQUENCE,
+            )
+            await ws.send(header + struct.pack('>I', len(payload)) + payload)
 
-        elif status_code in ("20000001", "20000002"):
-            return {"status": "running"}
+            # ── 2. 发送音频数据（分块，无序列号）──
+            chunk_size = 6400  # 200ms @ 16kHz 16bit mono
+            for offset in range(0, len(audio_data), chunk_size):
+                chunk = audio_data[offset:offset + chunk_size]
+                audio_header = self._build_header(
+                    MSG_AUDIO_ONLY_REQUEST,
+                    compression=COMPRESSION_NONE,
+                    serialization=SERIALIZATION_NONE,
+                    flags=FLAG_NO_SEQUENCE,
+                )
+                await ws.send(
+                    audio_header + struct.pack('>I', len(chunk)) + chunk
+                )
 
-        else:
-            status_msg = resp.headers.get("X-Api-Message", "未知错误")
-            return {"status": "failed", "error": f"[{status_code}] {status_msg}"}
+            # ── 3. 发送结束包（与 test_streaming_all.py 完全一致）──
+            last_header = self._build_header(
+                MSG_AUDIO_ONLY_REQUEST,
+                compression=COMPRESSION_NONE,
+                serialization=SERIALIZATION_NONE,
+                flags=FLAG_NEG_SEQUENCE,
+            )
+            await ws.send(last_header + struct.pack('>I', 0))
 
-    def wait_for_result(self, task_id: str, poll_interval: float = 2.0,
-                        max_wait: float = 600.0) -> dict:
-        """轮询等待识别完成"""
-        start = time.time()
+            # ── 4. 接收结果 ──
+            while True:
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=30)
+                except asyncio.TimeoutError:
+                    break
 
-        while True:
-            result = self.query_task(task_id)
+                resp = self._parse_response(raw)
 
-            if result["status"] in ("success", "failed"):
-                return result
+                if resp["type"] == "error":
+                    raise RuntimeError(f"ASR 识别错误: {resp['error']}")
 
-            if time.time() - start > max_wait:
-                return {
-                    "status": "failed",
-                    "error": f"ASR 超时 (等待 {max_wait}s)",
-                }
+                if resp["type"] == "response":
+                    data = resp["data"]
+                    result = data.get("result", {})
+                    utterances = result.get("utterances", [])
+                    text = result.get("text", "")
 
-            time.sleep(poll_interval)
+                    if utterances:
+                        all_utterances = utterances
+                    if text:
+                        full_text = text
+
+                    if full_text or utterances:
+                        # 再收几秒确保拿完后续包
+                        try:
+                            while True:
+                                raw = await asyncio.wait_for(ws.recv(), timeout=2)
+                                resp = self._parse_response(raw)
+                                if resp["type"] == "response":
+                                    data = resp["data"]
+                                    result = data.get("result", {})
+                                    u2 = result.get("utterances", [])
+                                    t2 = result.get("text", "")
+                                    if u2:
+                                        all_utterances = u2
+                                    if t2:
+                                        full_text = t2
+                        except asyncio.TimeoutError:
+                            pass
+                        break
+
+        # 清理临时文件
+        if wav_path != audio_path:
+            try:
+                os.unlink(wav_path)
+            except OSError:
+                pass
+
+        # 转换为统一格式
+        segments = []
+        for u in all_utterances:
+            utt_text = u.get("text", "").strip()
+            if utt_text:
+                segments.append({
+                    "text": utt_text,
+                    "start": u.get("start_time", 0) / 1000.0,
+                    "end":   u.get("end_time", 0) / 1000.0,
+                    "confidence": u.get("confidence", 0.95),
+                    "definite":   u.get("definite", False),
+                    "words":      u.get("words", []),
+                })
+
+        return {
+            "status": "success",
+            "segments": segments,
+            "full_text": full_text,
+        }
 
     # ──── 音频预处理 ────
 
     @staticmethod
     def convert_to_wav(audio_path: str) -> str:
-        """将音频转换为 16kHz 16bit mono WAV
-
-        API 推荐 raw/wav 格式，pcm_s16le, 16kHz, mono。
-        已经是正确格式的 WAV 则直接返回。
-        """
-        import os
-
+        """将音频转换为 16kHz 16bit mono WAV"""
         if audio_path.lower().endswith('.wav'):
             return audio_path
 
@@ -192,18 +269,6 @@ class VolcASRClient:
         return tmp.name
 
 
-# ──── 便捷函数 ────
-
-def process_audio_file(audio_url: str) -> dict:
-    """处理单个音频文件（通过公网 URL）"""
-    client = VolcASRClient()
-    task_id = client.submit_task(audio_url=audio_url)
-    result = client.wait_for_result(task_id)
-
-    if result["status"] == "failed":
-        raise RuntimeError(f"语音识别失败: {result.get('error', '未知错误')}")
-
-    return {
-        "segments": result["segments"],
-        "full_text": result["full_text"],
-    }
+def process_audio_file(audio_path: str) -> dict:
+    """同步封装：通过流式识别处理本地音频文件"""
+    return asyncio.run(VolcASRClient().recognize(audio_path))

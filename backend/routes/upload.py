@@ -30,9 +30,9 @@ def update_task(task_id: str, **kwargs):
 async def upload_video(
     background_tasks: BackgroundTasks,
     video: UploadFile = File(...),
-    script: str = Form(...),
+    script: str = Form(""),
 ):
-    """上传视频和脚本，后台开始处理"""
+    """上传视频和脚本（脚本可选），后台开始处理"""
     task_id = uuid.uuid4().hex[:12]
 
     # 保存视频
@@ -46,8 +46,9 @@ async def upload_video(
     content = await video.read()
     video_path.write_bytes(content)
 
-    # 解析脚本（一句一行）
-    script_lines = [s.strip() for s in script.strip().split("\n") if s.strip()]
+    # 解析脚本（一句一行），空脚本 = 无脚本模式
+    script_text = script.strip() if script else ""
+    script_lines = [s.strip() for s in script_text.split("\n") if s.strip()] if script_text else []
 
     # 初始化任务
     _tasks[task_id] = {
@@ -56,6 +57,7 @@ async def upload_video(
         "video_path": str(video_path.resolve()),
         "video_filename": video.filename,
         "script_lines": script_lines,
+        "scriptless": len(script_lines) == 0,
         "started_at": time.time(),
         "result": None,
         "error": None,
@@ -93,36 +95,35 @@ async def process_video_task(task_id: str):
         audio_path = str(Path(task["video_path"]).with_suffix(".m4a"))
         extract_audio(task["video_path"], audio_path)
 
-        # Step 3: ASR 识别（录音文件识别，需要公网 URL）
+        # Step 3: ASR 流式识别（WebSocket，无需公网 URL）
         update_task(task_id, status=TaskStatus.ASR_PROCESSING.value)
 
-        # 转换为 API 要求的 WAV 格式，放入 uploads 目录供静态文件服务访问
-        import shutil
-        wav_name = f"{task_id}.wav"
-        wav_path = str(upload_dir / wav_name)
-        tmp_wav = VolcASRClient.convert_to_wav(audio_path)
-        shutil.move(tmp_wav, wav_path)
-
-        # 获取音频的公网 URL（TOS 上传 或 本地 HTTP 服务 + ngrok）
-        audio_url = _get_or_upload_audio_url(wav_path, task_id)
-
         client = VolcASRClient()
-        asr_task_id = client.submit_task(audio_url=audio_url)
-        asr_result = client.wait_for_result(asr_task_id)
+        asr_result = await client.recognize(audio_path)
 
         if asr_result["status"] == "failed":
             raise RuntimeError(f"ASR 失败: {asr_result.get('error', '未知错误')}")
 
         segments = asr_result.get("segments", [])
 
-        # Step 4: LLM 语义对齐
+        # Step 4: LLM 语义对齐 或 无脚本聚类
         update_task(task_id, status=TaskStatus.ALIGNING.value)
 
-        aligner = LLMAligner()
-        alignment = aligner.align(task["script_lines"], segments)
-        sentences, unmatched = align_result_to_model(
-            task["script_lines"], segments, alignment
-        )
+        scriptless = task.get("scriptless", False)
+        alignment = None  # 聚类模式不需要 alignment
+        if scriptless:
+            # 无脚本模式：聚类相似片段
+            from backend.services.aligner import SegmentClusterer, cluster_result_to_model
+            clusterer = SegmentClusterer()
+            cluster_data = clusterer.cluster(segments)
+            sentences, unmatched = cluster_result_to_model(segments, cluster_data)
+        else:
+            # 有脚本模式：LLM 语义对齐
+            aligner = LLMAligner()
+            alignment = aligner.align(task["script_lines"], segments)
+            sentences, unmatched = align_result_to_model(
+                task["script_lines"], segments, alignment
+            )
 
         # Step 5: 分析引擎
         update_task(task_id, status=TaskStatus.ANALYZING.value)
@@ -131,16 +132,23 @@ async def process_video_task(task_id: str):
 
         for sent in sentences:
             for take_idx, take in enumerate(sent.takes):
-                # 构建分析上下文
+                # 构建分析上下文 — 找到对应的原始 ASR 片段索引
                 seg_idx = None
-                for match in alignment.get("matches", []):
-                    if match["script_index"] == sent.index:
-                        for t in match.get("takes", []):
-                            if t.get("segment_index") == take_idx or (
-                                abs(segments[t["segment_index"]]["start"] - take.start) < 0.01
-                            ):
-                                seg_idx = t["segment_index"]
-                                break
+                if alignment:
+                    for match in alignment.get("matches", []):
+                        if match["script_index"] == sent.index:
+                            for t in match.get("takes", []):
+                                if t.get("segment_index") == take_idx or (
+                                    abs(segments[t["segment_index"]]["start"] - take.start) < 0.01
+                                ):
+                                    seg_idx = t["segment_index"]
+                                    break
+                else:
+                    # 聚类模式：通过时间戳匹配
+                    for si, s in enumerate(segments):
+                        if abs(s["start"] - take.start) < 0.01:
+                            seg_idx = si
+                            break
 
                 prev_text = ""
                 next_text = ""
@@ -203,7 +211,7 @@ async def process_video_task(task_id: str):
             sentences=sentences,
             unmatched=unmatched,
             confirmed_count=0,
-            total_count=len(task["script_lines"]),
+            total_count=len(sentences),
         )
         _tasks[task_id]["result"] = result
         update_task(task_id, status=TaskStatus.DONE.value)
@@ -227,113 +235,3 @@ def _tag_to_severity(tag: str, analysis: dict) -> str:
         if tag in r.get("tags", []):
             return r.get("severity", "info")
     return "info"
-
-
-def _get_or_upload_audio_url(audio_path: str, task_id: str) -> str:
-    """
-    获取音频的公网 URL。
-    优先级：TOS 上传 > 本地服务（开发用）
-    """
-    from backend.config import settings as cfg
-
-    # 方式1：如果配置了 TOS，上传到火山引擎对象存储
-    tos_bucket = getattr(cfg, "TOS_BUCKET", "")
-    tos_endpoint = getattr(cfg, "TOS_ENDPOINT", "")
-    if tos_bucket and tos_endpoint:
-        return _upload_to_tos(audio_path, task_id, tos_bucket, tos_endpoint)
-
-    # 方式2：本地开发 - 使用本地 HTTP 服务
-    # 注意：这需要 ASR 服务能访问你的本地地址（不适用于生产）
-    local_url = getattr(cfg, "LOCAL_AUDIO_BASE_URL", "")
-    if local_url:
-        filename = Path(audio_path).name
-        return f"{local_url.rstrip('/')}/{filename}"
-
-    raise RuntimeError(
-        "音频需要公网可访问的 URL 才能进行语音识别。\n\n"
-        "请配置以下任一方式:\n"
-        "1. [推荐] 火山引擎 TOS:\n"
-        "   在 .env 中添加 TOS_BUCKET、TOS_ENDPOINT、TOS_ACCESS_KEY、TOS_SECRET_KEY\n"
-        "2. [开发] 本地 HTTP 服务:\n"
-        "   在 .env 中设置 LOCAL_AUDIO_BASE_URL=http://your-ip:8520/uploads\n"
-        "   并使用 ngrok 等工具暴露本地服务\n\n"
-        f"音频文件已提取到: {audio_path}"
-    )
-
-
-def _upload_to_tos(filepath: str, task_id: str, bucket: str, endpoint: str) -> str:
-    """上传文件到火山引擎 TOS（S3 兼容协议）"""
-    import hashlib
-    import base64
-    import hmac
-    import requests
-    from datetime import datetime, timezone
-    from pathlib import Path
-
-    from backend.config import settings as cfg
-    ak = getattr(cfg, "TOS_ACCESS_KEY", "")
-    sk = getattr(cfg, "TOS_SECRET_KEY", "")
-    region = getattr(cfg, "TOS_REGION", "cn-beijing")
-
-    filename = Path(filepath).name
-    object_key = f"koubo-audio/{task_id}/{filename}"
-
-    # 读取文件
-    with open(filepath, "rb") as f:
-        content = f.read()
-
-    if filename.endswith(".wav"):
-        content_type = "audio/wav"
-    elif filename.endswith(".m4a") or filename.endswith(".mp4"):
-        content_type = "audio/mp4"
-    elif filename.endswith(".mp3"):
-        content_type = "audio/mpeg"
-    elif filename.endswith(".ogg"):
-        content_type = "audio/ogg"
-    else:
-        content_type = "application/octet-stream"
-
-    # TOS S3 签名上传
-    host = f"{bucket}.{endpoint}"
-    url = f"https://{host}/{object_key}"
-
-    xdate = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    short_date = xdate[:8]
-
-    payload_hash = hashlib.sha256(content).hexdigest()
-    canonical_headers = f"content-type:{content_type}\nhost:{host}\nx-amz-content-sha256:{payload_hash}\nx-amz-date:{xdate}\n"
-    signed_headers = "content-type;host;x-amz-content-sha256;x-amz-date"
-
-    canonical_request = f"PUT\n/{object_key}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
-    credential_scope = f"{short_date}/{region}/tos/request"
-    hashed_canonical = hashlib.sha256(canonical_request.encode()).hexdigest()
-    string_to_sign = f"AWS4-HMAC-SHA256\n{xdate}\n{credential_scope}\n{hashed_canonical}"
-
-    def _sign(key, msg):
-        return hmac.new(key, msg.encode(), hashlib.sha256).digest()
-
-    k_date = _sign(("AWS4" + sk).encode(), short_date)
-    k_region = _sign(k_date, region)
-    k_service = _sign(k_region, "tos")
-    k_signing = _sign(k_service, "request")
-    signature = hmac.new(k_signing, string_to_sign.encode(), hashlib.sha256).hexdigest()
-
-    auth = (
-        f"AWS4-HMAC-SHA256 Credential={ak}/{credential_scope}, "
-        f"SignedHeaders={signed_headers}, Signature={signature}"
-    )
-
-    headers = {
-        "Host": host,
-        "Content-Type": content_type,
-        "x-amz-date": xdate,
-        "x-amz-content-sha256": payload_hash,
-        "Authorization": auth,
-    }
-
-    resp = requests.put(url, headers=headers, data=content, timeout=60)
-    if resp.status_code not in (200, 201):
-        raise RuntimeError(f"TOS 上传失败 ({resp.status_code}): {resp.text}")
-
-    # 返回可访问的 URL（如果 bucket 是公开的）
-    return f"https://{host}/{object_key}"

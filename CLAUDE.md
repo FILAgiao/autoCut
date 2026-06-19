@@ -46,7 +46,7 @@ backend/
     export.py      # GET /api/export/{id}/draft|srt|text — export endpoints
   services/
     media.py       # ffmpeg/ffprobe wrapper: video info, audio extraction, segment concat/cut
-    asr.py         # Volcengine 录音文件识别 HTTP API (submit + poll) — requires audio public URL
+    asr.py         # Volcengine 流式识别 WebSocket (wss://...sauc/bigmodel) — no public URL needed
     aligner.py     # LLM semantic alignment between script sentences and ASR segments; fallback: Levenshtein
     exporter.py    # Jianying draft JSON (+ pyJianYingDraft if available), SRT, text guide export
     analyzers/
@@ -64,18 +64,17 @@ backend/
 
 1. `POST /api/upload` — saves video, parses script lines, starts `process_video_task` as background task
 2. **Extract audio** (`media.extract_audio`) — ffmpeg copies/encodes audio to M4A
-3. **Convert + Upload** — M4A converted to WAV (16kHz/16bit/mono), then uploaded to Volcengine TOS object storage to get a public URL. Alternatively use ngrok + local server.
-4. **ASR** (`asr.VolcASRClient`) — HTTP POST to `/api/v3/auc/bigmodel/submit` with audio URL + resource ID `volc.bigasr.auc`, then polls `/query` every 2s until done
-5. **Align** (`aligner.LLMAligner`) — sends script + ASR segments to LLM (doubao-seed-2-0-pro) for semantic matching; falls back to Levenshtein distance (threshold 0.35)
-6. **Analyze** (`analyzers.run_all_analyzers`) — runs all 5 analyzers per take, computes A/B/C/D/废 grade via weighted scoring
-7. **Poll** — frontend polls `GET /api/task/{id}` every 2s until status = "done"
-8. **Edit** — user reviews takes in three-panel layout (script list | video | take versions), confirms/rejects via keyboard or clicks
-9. **Export** — confirmed takes assembled into剪映 draft JSON (with subtitle track), SRT, or text guide
+3. **ASR** (`asr.VolcASRClient`) — streaming WebSocket to `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel` with resource ID `volc.bigasr.sauc.duration`. Audio is converted to WAV (16kHz/16bit/mono) internally and streamed in chunks. No public URL needed.
+4. **Align** (`aligner.LLMAligner`) — sends script + ASR segments to LLM (doubao-seed-2-0-pro) for semantic matching; falls back to Levenshtein distance (threshold 0.35)
+5. **Analyze** (`analyzers.run_all_analyzers`) — runs all 5 analyzers per take, computes A/B/C/D/废 grade via weighted scoring
+6. **Poll** — frontend polls `GET /api/task/{id}` every 2s until status = "done"
+7. **Edit** — user reviews takes in three-panel layout (script list | video | take versions), confirms/rejects via keyboard or clicks
+8. **Export** — confirmed takes assembled into剪映 draft JSON (with subtitle track), SRT, or text guide
 
 ## Key Design Points
 
 - **No database** — tasks stored in an in-memory dict (`_tasks` in `upload.py`); lost on restart
-- **Recording file ASR** — uses HTTP submit/poll to `volc.bigasr.auc` (Volcengine 录音文件识别). Requires audio to be publicly accessible via URL — use Volcengine TOS object storage for production, or ngrok + local server for development
+- **Streaming WebSocket ASR** — uses Volcengine 流式语音识别 via `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel` with resource `volc.bigasr.sauc.duration`. Binary protocol: 4-byte header (protocol version, msg type, serialization/compression, reserved) + 4-byte big-endian payload size + payload. Audio sent in chunks with `FLAG_NO_SEQUENCE`, end marker uses `FLAG_NEG_SEQUENCE` with empty payload. No public URL or object storage required.
 - **Analyzers are pluggable** — create a new `.py` in `analyzers/`, inherit `BaseAnalyzer`, `@register` it in `__init__.py`
 - **LLM alignment prompt** is visible in `aligner.py:ALIGNMENT_PROMPT` — it asks the LLM to return JSON matching script indices to ASR segment indices
 - **Frontend STATE singleton** in `app.js` holds all editing state; global functions (`selectSentence`, `confirmCurrent`, etc.) are called by keyboard/player modules directly

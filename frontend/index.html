@@ -37,9 +37,12 @@
     </div>
 
     <div class="upload-card">
-      <h2>粘贴口播脚本</h2>
-      <textarea id="script-input" placeholder="一句一行，例如：&#10;大家好我是小飞&#10;今天给大家分享一个好东西&#10;这个功能真的很好用&#10;..." rows="10"></textarea>
-      <span class="hint" id="script-line-count">0 句</span>
+      <h2>粘贴口播脚本 <span class="optional-badge">可选</span></h2>
+      <textarea id="script-input" placeholder="一句一行，例如：&#10;大家好我是小飞&#10;今天给大家分享一个好东西&#10;这个功能真的很好用&#10;&#10;不填则自动从语音中检测聚类相似的片段" rows="10"></textarea>
+      <span class="hint">
+        <span id="script-line-count">0 句</span>
+        <span id="script-mode-hint" style="color:var(--accent)">— 留空将启用智能聚类模式</span>
+      </span>
     </div>
 
     <button id="btn-start" disabled>开始处理</button>
@@ -57,6 +60,7 @@
     <div id="editor-columns">
       <!-- 左栏：脚本列表 -->
       <aside id="script-panel">
+        <div id="script-mode-label">脚本行</div>
         <div id="script-list"></div>
       </aside>
 

@@ -17,17 +17,18 @@ router = APIRouter()
 
 @router.get("/export/{task_id}/draft")
 async def export_draft(task_id: str):
-    """导出剪映草稿文件（ZIP 包）"""
+    """导出剪映草稿文件（ZIP 包）。
+
+    如果用户未手动确认，自动为每句选择最佳 take（A级优先，不选废片）。
+    """
     task = get_task(task_id)
     if not task or not task.get("result"):
         return JSONResponse({"error": "任务未就绪"}, status_code=400)
 
     result: ProcessResult = task["result"]
 
-    # 检查是否有确认的句子
-    confirmed = [s for s in result.sentences if s.confirmed_take_index >= 0]
-    if not confirmed:
-        return JSONResponse({"error": "请至少确认一句后再导出"}, status_code=400)
+    # 自动选择最佳 take（如果用户未确认）
+    _auto_confirm_best(result)
 
     try:
         from backend.services.exporter import export_jianying_draft
@@ -63,10 +64,7 @@ async def export_srt(task_id: str):
         return JSONResponse({"error": "任务未就绪"}, status_code=400)
 
     result: ProcessResult = task["result"]
-
-    confirmed = [s for s in result.sentences if s.confirmed_take_index >= 0]
-    if not confirmed:
-        return JSONResponse({"error": "请至少确认一句后再导出"}, status_code=400)
+    _auto_confirm_best(result)
 
     try:
         from backend.services.exporter import export_srt_subtitles
@@ -121,3 +119,24 @@ def _format_time(seconds: float) -> str:
     m = int(seconds // 60)
     s = seconds % 60
     return f"{m:02d}:{s:05.2f}"
+
+
+def _auto_confirm_best(result: ProcessResult):
+    """为每句自动选择最佳 take（A级优先，跳过废片）"""
+    for sent in result.sentences:
+        if sent.confirmed_take_index >= 0:
+            continue
+        if not sent.takes:
+            continue
+        # 优先 A 级，其次 B、C
+        for grade in ['A', 'B', 'C']:
+            for i, t in enumerate(sent.takes):
+                if t.grade == grade and not t.is_abandoned:
+                    sent.confirmed_take_index = i
+                    break
+            if sent.confirmed_take_index >= 0:
+                break
+        # 如果全废，选第一个
+        if sent.confirmed_take_index < 0:
+            sent.confirmed_take_index = 0
+    result.confirmed_count = sum(1 for s in result.sentences if s.confirmed_take_index >= 0)
