@@ -6,7 +6,7 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Test scripts with credentials
+# Test scripts (may contain local paths or credentials)
 test_*.py
 
 # Uploaded & generated files

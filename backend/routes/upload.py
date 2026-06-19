@@ -93,11 +93,21 @@ async def process_video_task(task_id: str):
         audio_path = str(Path(task["video_path"]).with_suffix(".m4a"))
         extract_audio(task["video_path"], audio_path)
 
-        # Step 3: ASR 识别（流式 WebSocket，直接读本地文件，无需公网 URL）
+        # Step 3: ASR 识别（录音文件识别，需要公网 URL）
         update_task(task_id, status=TaskStatus.ASR_PROCESSING.value)
 
+        # 转换为 API 要求的 WAV 格式，放入 uploads 目录供静态文件服务访问
+        import shutil
+        wav_name = f"{task_id}.wav"
+        wav_path = str(upload_dir / wav_name)
+        tmp_wav = VolcASRClient.convert_to_wav(audio_path)
+        shutil.move(tmp_wav, wav_path)
+
+        # 获取音频的公网 URL（TOS 上传 或 本地 HTTP 服务 + ngrok）
+        audio_url = _get_or_upload_audio_url(wav_path, task_id)
+
         client = VolcASRClient()
-        asr_task_id = client.submit_task(audio_path=audio_path)
+        asr_task_id = client.submit_task(audio_url=audio_url)
         asr_result = client.wait_for_result(asr_task_id)
 
         if asr_result["status"] == "failed":
