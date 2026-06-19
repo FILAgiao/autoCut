@@ -121,13 +121,41 @@ def save_clip(project_id: str, filename: str, content: bytes, original_name: str
     clip_path = clips_dir / clip_filename
     clip_path.write_bytes(content)
 
+    # Faststart remux: 移动 moov atom 到文件开头，支持浏览器流式播放
+    # 视频时长检测
+    import subprocess
+    try:
+        tmp_path = clip_path.with_suffix('.tmp.mp4')
+        subprocess.run([
+            'ffmpeg', '-i', str(clip_path),
+            '-c', 'copy', '-movflags', '+faststart',
+            str(tmp_path), '-y'
+        ], capture_output=True, timeout=60)
+        if tmp_path.exists() and tmp_path.stat().st_size > 0:
+            tmp_path.replace(clip_path)
+        else:
+            tmp_path.unlink(missing_ok=True)
+    except Exception:
+        pass  # faststart 失败不阻塞上传
+
+    # 获取真实视频时长
+    duration = 0
+    try:
+        result = subprocess.run([
+            'ffprobe', '-v', 'quiet', '-show_entries', 'format=duration',
+            '-of', 'csv=p=0', str(clip_path)
+        ], capture_output=True, text=True, timeout=10)
+        duration = float(result.stdout.strip() or 0)
+    except Exception:
+        pass
+
     clip_id = f"c{clip_idx}"
     clip_info = {
         "id": clip_id,
         "filename": clip_filename,
         "original_name": original_name or filename,
-        "duration": 0,
-        "file_size": len(content),
+        "duration": duration,
+        "file_size": clip_path.stat().st_size,
     }
 
     # 追加到 project
