@@ -16,6 +16,7 @@ async def lifespan(app: FastAPI):
     # 启动时确保目录存在
     Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
     Path(settings.OUTPUT_DIR).mkdir(parents=True, exist_ok=True)
+    Path("projects").mkdir(parents=True, exist_ok=True)
     yield
 
 
@@ -57,7 +58,7 @@ async def health():
 
 
 # 延迟注册路由（避免循环导入）
-from backend.routes import upload, process, export
-app.include_router(upload.router, prefix="/api", tags=["upload"])
+from backend.routes import projects, process, export
+app.include_router(projects.router, prefix="/api", tags=["projects"])
 app.include_router(process.router, prefix="/api", tags=["process"])
 app.include_router(export.router, prefix="/api", tags=["export"])

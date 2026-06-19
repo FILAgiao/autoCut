@@ -20,3 +20,6 @@ outputs/
 # OS
 Thumbs.db
 .DS_Store
+
+# User project data
+projects/

@@ -5,10 +5,8 @@ function initKeyboard() {
 }
 
 function handleKeyDown(e) {
-  // 如果在输入框中，忽略
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-  // 防止快捷键触发浏览器默认行为
   const handled = dispatchKey(e);
   if (handled) {
     e.preventDefault();
@@ -40,16 +38,16 @@ function dispatchKey(e) {
 
     // ──── 确认 / 拒掉 ────
     case key === 'Enter' && !ctrl:
-      confirmCurrent();
+      if (typeof editorConfirm === 'function') editorConfirm();
       return true;
 
     case key === 'r' || key === 'R':
-      rejectCurrent();
+      if (typeof editorReject === 'function') editorReject();
       return true;
 
     // ──── 播放 ────
     case key === ' ':
-      e.preventDefault();  // 防止页面滚动
+      e.preventDefault();
       togglePlay();
       return true;
 
@@ -69,7 +67,7 @@ function dispatchKey(e) {
       return true;
 
     case ctrl && (key === 's' || key === 'S'):
-      exportDraft();
+      if (typeof exportProjectDraft === 'function') exportProjectDraft();
       return true;
 
     case ctrl && (key === 'z' || key === 'Z'):
@@ -84,11 +82,6 @@ function dispatchKey(e) {
       }
       return false;
 
-    // ──── Tab 切换焦点 ────
-    case key === 'Tab':
-      // 默认行为就够，在脚本列表和版本列表间 tab
-      return false;
-
     default:
       return false;
   }
@@ -100,7 +93,6 @@ function navigateTake(direction) {
 
   let nextIdx = STATE.currentTakeIndex + direction;
 
-  // 跳过废片
   if (direction > 0) {
     while (nextIdx < sent.takes.length && sent.takes[nextIdx].is_abandoned) {
       nextIdx++;
@@ -114,7 +106,6 @@ function navigateTake(direction) {
   if (nextIdx < 0 || nextIdx >= sent.takes.length) return;
 
   selectTake(nextIdx);
-  // 切换版本时自动播放
   playCurrentTake();
 }
 
@@ -122,7 +113,6 @@ function quickSelect(index) {
   const sent = STATE.sentences[STATE.currentSentence];
   if (!sent || index >= sent.takes.length) return;
 
-  // 跳过废片
   const validTakes = sent.takes.filter(t => !t.is_abandoned);
   if (index < validTakes.length) {
     const realIndex = sent.takes.indexOf(validTakes[index]);
@@ -138,7 +128,29 @@ function undoConfirm() {
   if (!sent || sent.confirmed_take_index < 0) return;
 
   sent.confirmed_take_index = -1;
-  updateProgress();
+  if (typeof updateEditorProgress === 'function') updateEditorProgress();
+  renderScriptList();
+  renderTakesList();
+}
+
+async function autoConfirmAll() {
+  for (let i = 0; i < STATE.sentences.length; i++) {
+    const sent = STATE.sentences[i];
+    if (sent.confirmed_take_index >= 0) continue;
+    if (!sent.takes.length) continue;
+
+    const best = findBestTakeIndex(sent);
+    if (best >= 0) {
+      sent.confirmed_take_index = best;
+      try {
+        await fetch(
+          `/api/projects/${_currentProjectId}/confirm/${i}/${best}`,
+          { method: 'PUT' }
+        );
+      } catch (e) {}
+    }
+  }
+  if (typeof updateEditorProgress === 'function') updateEditorProgress();
   renderScriptList();
   renderTakesList();
 }
