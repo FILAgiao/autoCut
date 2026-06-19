@@ -6,6 +6,17 @@ let _loopTimer = null;
 
 function initPlayer() {
   _player = document.getElementById('video-player');
+  console.log('[initPlayer] video element found:', !!_player, 'src:', _player ? _player.src : 'N/A');
+
+  if (!_player) {
+    console.error('[initPlayer] video-player element not found in DOM');
+    return;
+  }
+
+  _player.addEventListener('error', (e) => {
+    const err = _player.error;
+    console.error('[player] error event:', err ? `code=${err.code} message=${err.message}` : 'unknown');
+  });
 
   _player.addEventListener('timeupdate', () => {
     // 片段循环：播到 end 时自动跳回 start
@@ -66,7 +77,12 @@ function playSegment(start, end) {
 }
 
 function togglePlay() {
-  if (!_player) return;
+  if (!_player) {
+    console.warn('[togglePlay] _player is null');
+    return;
+  }
+
+  console.log('[togglePlay] paused:', _player.paused, 'segmentLoop:', _segmentLoop, 'readyState:', _player.readyState, 'src:', _player.src);
 
   if (!_segmentLoop) {
     const sent = STATE.sentences[STATE.currentSentence];
@@ -79,9 +95,12 @@ function togglePlay() {
   if (_player.paused) {
     if (_segmentLoop &&
         (_player.currentTime < _segmentLoop.start || _player.currentTime >= _segmentLoop.end)) {
+      console.log('[togglePlay] seeking to segment start:', _segmentLoop.start);
       _player.currentTime = _segmentLoop.start;
     }
-    _player.play().catch(() => {});
+    _player.play().catch((err) => {
+      console.error('[togglePlay] play() failed:', err.message);
+    });
   } else {
     _player.pause();
   }
@@ -96,6 +115,7 @@ function playCurrentTake() {
 
 function seekTo(time) {
   if (!_player) return;
+  console.log('[seekTo] time:', time, 'currentTime was:', _player.currentTime, 'readyState:', _player.readyState);
   _segmentLoop = null;
   _player.currentTime = time;
 }

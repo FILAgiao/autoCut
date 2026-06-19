@@ -118,6 +118,7 @@ function handleRoute() {
 
 /* ──── 渲染函数（被 editor.js 调用） ──── */
 function renderAll() {
+  console.log('[renderAll] sentences:', STATE.sentences.length, 'currentSentence:', STATE.currentSentence, 'currentTakeIndex:', STATE.currentTakeIndex);
   renderScriptList();
   renderTakesList();
   renderTimeline();
@@ -159,6 +160,11 @@ function renderTakesList() {
 
   const list = document.getElementById('takes-list');
   if (!list) return;
+
+  console.log('[renderTakesList] sentence:', STATE.currentSentence, 'takes:', sent.takes.length,
+    'confirmed:', sent.confirmed_take_index,
+    'currentTakeIndex:', STATE.currentTakeIndex,
+    'abandoned:', sent.takes.map(t => t.is_abandoned));
 
   if (!sent.takes.length) {
     list.innerHTML = '<div style="padding:16px;color:var(--text-dim);font-size:13px;">未找到对应片段</div>';
@@ -248,6 +254,7 @@ function updateTakeInfo() {
 
 /* ──── 导航操作 ──── */
 function selectSentence(index) {
+  console.log('[selectSentence] index:', index, 'total sentences:', STATE.sentences.length);
   if (index < 0 || index >= STATE.sentences.length) return;
   STATE.currentSentence = index;
 
@@ -264,6 +271,7 @@ function selectSentence(index) {
 }
 
 function selectTake(index) {
+  console.log('[selectTake] index:', index, 'currentSentence:', STATE.currentSentence);
   const sent = STATE.sentences[STATE.currentSentence];
   if (!sent || index < 0 || index >= sent.takes.length) return;
   STATE.currentTakeIndex = index;
@@ -285,6 +293,7 @@ function findBestTakeIndex(sent) {
 }
 
 function jumpToFirstAvailable() {
+  console.log('[jumpToFirstAvailable] sentences:', STATE.sentences.length);
   for (let i = 0; i < STATE.sentences.length; i++) {
     if (STATE.sentences[i].takes.length > 0) {
       selectSentence(i);
@@ -300,15 +309,20 @@ function seekToCurrentTake() {
   const sent = STATE.sentences[STATE.currentSentence];
   if (!sent || !sent.takes.length) return;
   const t = sent.takes[STATE.currentTakeIndex];
+  console.log('[seekToCurrentTake] sentence:', STATE.currentSentence, 'takeIndex:', STATE.currentTakeIndex, 'start:', t ? t.start : 'N/A');
   if (t) seekTo(t.start);
 }
 
 function flashTakeItem(index, className) {
+  console.log('[flashTakeItem] index:', index, 'className:', className);
   const list = document.getElementById('takes-list');
   if (!list) return;
   const items = list.querySelectorAll('.take-item');
   const item = items[index];
-  if (!item) return;
+  if (!item) {
+    console.warn('[flashTakeItem] item not found at index:', index, 'total items:', items.length);
+    return;
+  }
   item.classList.add(className);
   item.addEventListener('animationend', () => item.classList.remove(className), { once: true });
 }
@@ -316,6 +330,7 @@ function flashTakeItem(index, className) {
 /* ──── Canvas 字幕叠加（编辑模式） ──── */
 function initEditorSubtitleCanvas() {
   const video = document.getElementById('video-player');
+  console.log('[initEditorSubtitleCanvas] video element:', !!video);
   if (!video) return;
   video.addEventListener('timeupdate', updateEditorSubtitle);
   video.addEventListener('seeked', updateEditorSubtitle);
@@ -329,7 +344,11 @@ function initEditorSubtitleCanvas() {
 function updateEditorSubtitle() {
   const canvas = document.getElementById('subtitle-canvas');
   const video = document.getElementById('video-player');
-  if (!canvas || !video || video.readyState < 1) return;
+  if (!canvas || !video) return;
+  if (video.readyState < 1) {
+    // Video not loaded yet; called too early, skip silently
+    return;
+  }
 
   const videoRect = video.getBoundingClientRect();
   const parentRect = video.parentElement.getBoundingClientRect();

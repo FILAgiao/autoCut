@@ -7,6 +7,7 @@ function initKeyboard() {
 function handleKeyDown(e) {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
+  console.log('[keyboard] key:', e.key, 'ctrl:', e.ctrlKey || e.metaKey);
   const handled = dispatchKey(e);
   if (handled) {
     e.preventDefault();
@@ -88,6 +89,7 @@ function dispatchKey(e) {
 }
 
 function navigateTake(direction) {
+  console.log('[navigateTake] direction:', direction, 'currentTakeIndex:', STATE.currentTakeIndex);
   const sent = STATE.sentences[STATE.currentSentence];
   if (!sent || !sent.takes.length) return;
 

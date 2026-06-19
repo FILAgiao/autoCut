@@ -345,7 +345,7 @@ function renderEditorMode(project, container) {
           <div id="script-list"></div>
         </aside>
         <main id="video-panel">
-          <video id="video-player" controls disablepictureinpicture>
+          <video id="video-player" controls disablepictureinpicture preload="auto" playsinline>
             您的浏览器不支持视频播放
           </video>
           <canvas id="subtitle-canvas"></canvas>
@@ -388,8 +388,23 @@ function renderEditorMode(project, container) {
   const video = document.getElementById('video-player');
   const clips = project.clips || [];
   if (clips.length > 0) {
-    video.src = `/api/projects/${project.id}/clips/${clips[0].id}`;
+    const clipUrl = `/api/projects/${project.id}/clips/${clips[0].id}`;
+    console.log('[renderEditorMode] setting video.src to:', clipUrl, 'clip:', clips[0]);
+    video.src = clipUrl;
+  } else {
+    console.warn('[renderEditorMode] no clips available for video, clips:', clips);
   }
+
+  video.onerror = (e) => {
+    const err = video.error;
+    console.error('[video] error event:', err ? `code=${err.code} message=${err.message}` : 'unknown', 'src:', video.src);
+    document.getElementById('take-info').textContent =
+      `视频加载失败: ${err ? err.message : '未知错误'} (${video.src})`;
+  };
+  video.oncanplay = () => console.log('[video] canplay, readyState:', video.readyState, 'duration:', video.duration);
+  video.onloadeddata = () => console.log('[video] loadeddata, videoWidth:', video.videoWidth, 'videoHeight:', video.videoHeight);
+  video.onwaiting = () => console.log('[video] waiting (buffering)...');
+  video.onstalled = () => console.warn('[video] stalled');
 
   // Determine mode label
   const hasScript = (project.script || '').trim().length > 0;
@@ -421,10 +436,14 @@ function renderEditorMode(project, container) {
 
 /* ──── Editor confirm / reject (project-based) ──── */
 async function editorConfirm() {
+  console.log('[editorConfirm] called, currentSentence:', STATE.currentSentence, 'currentTakeIndex:', STATE.currentTakeIndex);
   const sent = STATE.sentences[STATE.currentSentence];
   if (!sent) return;
   const takeIdx = STATE.currentTakeIndex;
-  if (takeIdx < 0 || takeIdx >= sent.takes.length) return;
+  if (takeIdx < 0 || takeIdx >= sent.takes.length) {
+    console.warn('[editorConfirm] invalid takeIdx:', takeIdx, 'takes.length:', sent.takes.length);
+    return;
+  }
 
   try {
     await fetch(
@@ -445,29 +464,50 @@ async function editorConfirm() {
 }
 
 async function editorReject() {
+  console.log('[editorReject] called, currentSentence:', STATE.currentSentence, 'currentTakeIndex:', STATE.currentTakeIndex);
   const sent = STATE.sentences[STATE.currentSentence];
-  if (!sent) return;
+  if (!sent || !sent.takes.length) {
+    console.warn('[editorReject] no sentence or no takes');
+    return;
+  }
   const takeIdx = STATE.currentTakeIndex;
+  if (takeIdx < 0 || takeIdx >= sent.takes.length) {
+    console.warn('[editorReject] invalid takeIdx:', takeIdx, 'takes.length:', sent.takes.length);
+    return;
+  }
+  console.log('[editorReject] rejecting take', takeIdx, 'text:', sent.takes[takeIdx].text);
 
   try {
-    await fetch(
-      `/api/projects/${_currentProjectId}/reject/${STATE.currentSentence}/${takeIdx}`,
-      { method: 'PUT' }
-    );
-  } catch (e) {}
+    const url = `/api/projects/${_currentProjectId}/reject/${STATE.currentSentence}/${takeIdx}`;
+    console.log('[editorReject] PUT', url);
+    const resp = await fetch(url, { method: 'PUT' });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error('[editorReject] API error:', resp.status, errText);
+    }
+  } catch (e) {
+    console.error('[editorReject] fetch error:', e.message);
+  }
 
   sent.takes[takeIdx].is_abandoned = true;
   sent.takes[takeIdx].grade = '废';
 
   flashTakeItem(takeIdx, 'reject-flash');
 
-  const next = sent.takes.findIndex((t, i) => i > takeIdx && !t.is_abandoned);
+  // Find next non-abandoned take (forward first, then wrap)
+  let next = sent.takes.findIndex((t, i) => i > takeIdx && !t.is_abandoned);
+  if (next < 0) {
+    next = sent.takes.findIndex((t, i) => !t.is_abandoned);
+  }
+
   if (next >= 0) {
     STATE.currentTakeIndex = next;
-    renderTakesList();
-    updateEditorSubtitle();
     seekToCurrentTake();
   }
+  // Always re-render so abandoned styling is visible
+  renderTakesList();
+  updateEditorSubtitle();
+  updateCurrentSentenceLabel();
 }
 
 function updateEditorProgress() {

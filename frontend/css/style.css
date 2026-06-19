@@ -963,9 +963,12 @@ body {
 #video-player {
   max-width: 100%;
   max-height: 58vh;
+  min-width: 320px;
+  min-height: 180px;
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
   transition: border-radius var(--transition);
+  background: #111;
 }
 
 #subtitle-canvas {
