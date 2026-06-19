@@ -267,7 +267,16 @@ function selectSentence(index) {
   }
 
   renderAll();
-  if (sent.takes.length > 0) seekToCurrentTake();
+  if (sent.takes.length > 0) {
+    seekToCurrentTake();
+    // 自动播放选中片段
+    const video = document.getElementById('video-player');
+    const t = sent.takes[STATE.currentTakeIndex];
+    if (video && t) {
+      video.currentTime = t.start;
+      video.play().catch(() => {});
+    }
+  }
 }
 
 function selectTake(index) {
@@ -279,6 +288,12 @@ function selectTake(index) {
   updateTakeInfo();
   updateEditorSubtitle();
   seekToCurrentTake();
+  // 自动播放当前片段
+  const video = document.getElementById('video-player');
+  if (video) {
+    video.currentTime = sent.takes[index].start;
+    video.play().catch(() => {});
+  }
 }
 
 function findBestTakeIndex(sent) {
