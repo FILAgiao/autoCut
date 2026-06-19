@@ -1,0 +1,22 @@
+# Credentials - DO NOT COMMIT
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Test scripts with credentials
+test_*.py
+
+# Uploaded & generated files
+uploads/
+outputs/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store

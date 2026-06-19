@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AutoCut</title>
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<div id="app">
+  <!-- ====== 顶部栏 ====== -->
+  <header id="top-bar">
+    <span class="logo">🎬 AutoCut</span>
+    <span id="progress-text">就绪</span>
+    <div id="top-actions">
+      <button id="btn-export" disabled title="Ctrl+S">导出剪映草稿</button>
+      <button id="btn-auto-confirm" disabled title="Ctrl+Enter">一键确认</button>
+    </div>
+  </header>
+
+  <!-- ====== 上传区（初始显示） ====== -->
+  <section id="upload-area">
+    <div class="upload-card">
+      <h2>上传口播视频</h2>
+      <div class="drop-zone" id="video-drop-zone">
+        <input type="file" id="video-input" accept="video/*" hidden>
+        <span class="drop-icon">📹</span>
+        <span>拖拽视频到此处，或 <a href="#" id="video-browse">点击选择</a></span>
+        <span class="hint">支持 MP4 / MOV / AVI，最大 500MB</span>
+      </div>
+      <div id="video-info" class="file-info hidden">
+        <span id="video-name"></span>
+        <span id="video-size"></span>
+        <span id="video-duration"></span>
+      </div>
+    </div>
+
+    <div class="upload-card">
+      <h2>粘贴口播脚本</h2>
+      <textarea id="script-input" placeholder="一句一行，例如：&#10;大家好我是小飞&#10;今天给大家分享一个好东西&#10;这个功能真的很好用&#10;..." rows="10"></textarea>
+      <span class="hint" id="script-line-count">0 句</span>
+    </div>
+
+    <button id="btn-start" disabled>开始处理</button>
+    <div id="upload-status"></div>
+  </section>
+
+  <!-- ====== 主编辑区（处理完成后显示） ====== -->
+  <section id="editor-area" class="hidden">
+    <!-- 时间轴总览 -->
+    <div id="timeline-bar">
+      <canvas id="timeline-canvas"></canvas>
+    </div>
+
+    <!-- 三栏布局 -->
+    <div id="editor-columns">
+      <!-- 左栏：脚本列表 -->
+      <aside id="script-panel">
+        <div id="script-list"></div>
+      </aside>
+
+      <!-- 中栏：视频预览 -->
+      <main id="video-panel">
+        <video id="video-player" controls disablepictureinpicture>
+          您的浏览器不支持视频播放
+        </video>
+        <div id="take-info">
+          <span id="take-grade"></span>
+          <span id="take-time"></span>
+          <span id="take-duration"></span>
+          <span id="take-tags"></span>
+        </div>
+        <div id="take-actions">
+          <button id="btn-play" title="Space">⏵ 播放此段</button>
+          <button id="btn-confirm" title="Enter">✓ 确认选中</button>
+          <button id="btn-reject" title="R">✕ 拒掉此遍</button>
+        </div>
+      </main>
+
+      <!-- 右栏：版本列表 -->
+      <aside id="takes-panel">
+        <div id="current-sentence-label"></div>
+        <div id="takes-list"></div>
+        <div id="unmatched-panel" class="hidden">
+          <h3>── 未匹配片段 ──</h3>
+          <div id="unmatched-list"></div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- 底部快捷键提示 -->
+    <footer id="shortcut-bar">
+      <span>← → 切句</span>
+      <span>↑ ↓ 切换本</span>
+      <span>Enter 确认</span>
+      <span>Space 播放</span>
+      <span>R 拒掉</span>
+      <span>1-9 速选</span>
+      <span>Ctrl+Enter 全确认</span>
+      <span>Ctrl+S 导出</span>
+    </footer>
+  </section>
+</div>
+
+<script src="/static/js/app.js"></script>
+<script src="/static/js/player.js"></script>
+<script src="/static/js/timeline.js"></script>
+<script src="/static/js/keyboard.js"></script>
+</body>
+</html>

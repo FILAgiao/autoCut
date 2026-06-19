@@ -1,0 +1,21 @@
+# Web framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.18
+
+# ASR - 火山引擎
+volcengine-python-sdk>=1.0.0
+
+# LLM - OpenAI 兼容接口
+openai>=1.0.0
+
+# Video processing
+ffmpeg-python>=0.2.0
+
+# Jianying draft export
+pyJianYingDraft
+
+# Utilities
+python-dotenv>=1.0.0
+Levenshtein>=0.25.0
+aiofiles>=24.0.0
