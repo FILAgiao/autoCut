@@ -121,22 +121,24 @@ def save_clip(project_id: str, filename: str, content: bytes, original_name: str
     clip_path = clips_dir / clip_filename
     clip_path.write_bytes(content)
 
-    # Faststart remux: 移动 moov atom 到文件开头，支持浏览器流式播放
-    # 视频时长检测
-    import subprocess
+    # 转码 + faststart: 确保浏览器兼容 (H.264, 1080p max, moov在前)
+    import subprocess, shutil
     try:
-        tmp_path = clip_path.with_suffix('.tmp.mp4')
-        subprocess.run([
+        tmp_path = clip_path.with_suffix('.transcoded.mp4')
+        result = subprocess.run([
             'ffmpeg', '-i', str(clip_path),
-            '-c', 'copy', '-movflags', '+faststart',
-            str(tmp_path), '-y'
-        ], capture_output=True, timeout=60)
-        if tmp_path.exists() and tmp_path.stat().st_size > 0:
+            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+            '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease',
+            '-c:a', 'aac', '-b:a', '128k',
+            '-movflags', '+faststart',
+            '-y', str(tmp_path)
+        ], capture_output=True, timeout=300)
+        if tmp_path.exists() and tmp_path.stat().st_size > 1000:
             tmp_path.replace(clip_path)
         else:
             tmp_path.unlink(missing_ok=True)
     except Exception:
-        pass  # faststart 失败不阻塞上传
+        pass  # 转码失败不阻塞上传，保留原文件
 
     # 获取真实视频时长
     duration = 0
