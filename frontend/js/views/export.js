@@ -11,7 +11,7 @@ function renderExport(project, container) {
   container.innerHTML = `
     <div id="export-area">
       <div class="export-section">
-        <h3>字幕样式设置</h3>
+        <h3>字幕样式</h3>
         <div class="subtitle-panel-body export-subtitle-grid">
           <div class="subtitle-field">
             <label>字体</label>
@@ -25,8 +25,11 @@ function renderExport(project, container) {
             </select>
           </div>
           <div class="subtitle-field">
-            <label>字号比例 <span id="sub-font-size-val">${s.fontSizeRatio}</span></label>
-            <input type="range" id="sub-font-size" min="0.04" max="0.16" step="0.01" value="${s.fontSizeRatio}">
+            <label>字号比例</label>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <input type="range" id="sub-font-size" min="0.04" max="0.16" step="0.01" value="${s.fontSizeRatio}" style="flex:1;">
+              <span id="sub-font-size-val" style="font-size:12px;color:var(--text-dim);min-width:36px;text-align:right;font-weight:500;">${s.fontSizeRatio}</span>
+            </div>
           </div>
           <div class="subtitle-field">
             <label>文本颜色</label>
@@ -54,22 +57,25 @@ function renderExport(project, container) {
             </div>
           </div>
           <div class="subtitle-field">
-            <label>Y 位置</label>
+            <label>垂直位置</label>
             <input type="range" id="sub-position-y" min="-0.9" max="-0.1" step="0.05" value="${s.positionY}">
           </div>
           <div class="subtitle-field">
-            <label>每行最大字数 <span id="sub-max-chars-val">${s.maxChars} 字</span></label>
-            <input type="range" id="sub-max-chars" min="8" max="24" step="1" value="${s.maxChars}">
+            <label>每行最大字数</label>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <input type="range" id="sub-max-chars" min="8" max="24" step="1" value="${s.maxChars}" style="flex:1;">
+              <span id="sub-max-chars-val" style="font-size:12px;color:var(--text-dim);min-width:40px;text-align:right;font-weight:500;">${s.maxChars} 字</span>
+            </div>
           </div>
         </div>
       </div>
 
       <div class="export-section">
-        <h3>导出</h3>
+        <h3>导出格式</h3>
         <div class="export-actions">
-          <button id="btn-export-draft" class="btn-export-primary">导出剪映草稿 (.zip)</button>
-          <button id="btn-export-srt" class="btn-export">导出 SRT 字幕</button>
-          <button id="btn-export-text" class="btn-export">导出剪辑清单</button>
+          <button id="btn-export-draft" class="btn-export-primary">剪映草稿 (.zip)</button>
+          <button id="btn-export-srt" class="btn-export">SRT 字幕</button>
+          <button id="btn-export-text" class="btn-export">剪辑清单</button>
         </div>
         <p class="export-hint">导出时会自动为每句选择最佳 take（A 级优先，跳过废片）</p>
       </div>

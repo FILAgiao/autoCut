@@ -20,12 +20,12 @@ function renderIdleMode(project, container) {
   container.innerHTML = `
     <div id="editor-idle">
       <div class="upload-card">
-        <h2><span class="card-icon">📹</span> 上传视频</h2>
+        <h2><span class="card-icon">🎥</span> 上传视频</h2>
         <div class="drop-zone" id="video-drop-zone">
           <input type="file" id="video-input" accept="video/*" hidden>
           <span class="drop-icon">📁</span>
           <span>拖拽视频到此处，或 <a href="#" id="video-browse">点击选择</a></span>
-          <span class="hint">支持 MP4 / MOV / AVI，最大 500MB</span>
+          <span class="hint" style="margin-top:4px;">支持 MP4 / MOV / AVI，最大 500MB</span>
         </div>
         <div id="clips-list" class="clips-list"></div>
         <div id="video-info" class="file-info hidden">
@@ -146,7 +146,7 @@ function renderProcessingMode(project, container) {
   container.innerHTML = `
     <div id="editor-processing" class="processing-view">
       <div class="processing-spinner"></div>
-      <h3>正在处理...</h3>
+      <h3>正在处理视频</h3>
       <p id="processing-status-text">${getStatusText(project.task_status)}</p>
     </div>
   `;
@@ -242,9 +242,9 @@ function renderEditorMode(project, container) {
             <span id="take-tags"></span>
           </div>
           <div id="take-actions">
-            <button id="btn-play" title="Space">⏵ 播放此段</button>
-            <button id="btn-confirm" title="Enter">✓ 确认选中</button>
-            <button id="btn-reject" title="R">✕ 拒掉此遍</button>
+            <button id="btn-play" title="Space">▶ 播放此段</button>
+            <button id="btn-confirm" title="Enter">✓ 确认</button>
+            <button id="btn-reject" title="R">✕ 拒掉</button>
           </div>
         </main>
         <aside id="takes-panel">

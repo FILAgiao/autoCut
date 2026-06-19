@@ -11,8 +11,12 @@ async function renderHome() {
       </div>
     </header>
     <section id="home-area">
+      <div class="home-hero">
+        <h1 class="hero-title">AutoCut</h1>
+        <p class="hero-subtitle">智能口播剪辑 — 上传视频，自动对齐字幕，一键导出剪映草稿</p>
+      </div>
       <div class="home-header">
-        <h2>我的项目</h2>
+        <h2>项目</h2>
         <button id="btn-new-project" class="btn-accent">+ 新建项目</button>
       </div>
       <div id="project-grid"></div>
@@ -64,15 +68,20 @@ async function loadProjectList() {
 
     if (!projects.length) {
       grid.innerHTML = `
+        <div class="project-card project-card-new" onclick="showNewProjectModal()" style="grid-column: 1 / -1;">
+          <div class="project-card-icon">＋</div>
+          <div class="project-card-name">新建项目</div>
+          <div class="project-card-meta">上传视频开始剪辑</div>
+        </div>
         <div class="empty-state">
           <div class="empty-icon">🎬</div>
           <p>还没有项目</p>
-          <p class="empty-hint">点击「新建项目」开始剪辑你的口播视频</p>
+          <p class="empty-hint">点击上方卡片或「新建项目」开始剪辑你的口播视频</p>
         </div>`;
       return;
     }
 
-    grid.innerHTML = projects.map(p => {
+    let cards = projects.map(p => {
       const statusLabels = { idle: '待处理', processing: '处理中', done: '已处理', error: '处理失败' };
       const statusLabel = statusLabels[p.task_status] || p.task_status;
       const statusCls = `status-${p.task_status === 'done' ? 'done' : p.task_status === 'processing' ? 'processing' : p.task_status === 'error' ? 'error' : 'idle'}`;
@@ -89,7 +98,17 @@ async function loadProjectList() {
           <div class="project-card-time">${timeAgo}</div>
           <button class="project-card-delete" onclick="deleteProject(event, '${p.id}')" title="删除项目">✕</button>
         </div>`;
-    }).join('');
+    });
+
+    // Prepend "new project" card
+    cards.unshift(`
+      <div class="project-card project-card-new" onclick="showNewProjectModal()">
+        <div class="project-card-icon">＋</div>
+        <div class="project-card-name">新建项目</div>
+        <div class="project-card-meta">上传视频开始剪辑</div>
+      </div>`);
+
+    grid.innerHTML = cards.join('');
   } catch (err) {
     grid.innerHTML = '<div class="empty-state"><p>加载失败，请检查服务是否启动</p></div>';
   }
