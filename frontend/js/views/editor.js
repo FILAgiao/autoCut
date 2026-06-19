@@ -155,16 +155,36 @@ async function startEditorProcessing() {
       body: JSON.stringify({ script }),
     });
 
-    // Upload clip
-    statusEl.textContent = '上传视频...';
+    // Upload clip with progress
     const formData = new FormData();
     formData.append('video', file);
-    const uploadResp = await fetch(`/api/projects/${_currentProjectId}/clips`, { method: 'POST', body: formData });
+    const uploadResp = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `/api/projects/${_currentProjectId}/clips`);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const pct = Math.round(e.loaded / e.total * 100);
+          statusEl.textContent = `上传视频... ${pct}%`;
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve({ ok: true, status: xhr.status, json: () => JSON.parse(xhr.responseText) });
+        } else {
+          let detail;
+          try { detail = JSON.parse(xhr.responseText); } catch (_) {}
+          reject(new Error((detail && (detail.detail || detail.error)) || '上传失败'));
+        }
+      };
+      xhr.onerror = () => reject(new Error('上传失败'));
+      xhr.send(formData);
+    });
     if (!uploadResp.ok) {
       const err = await uploadResp.json();
       throw new Error(err.detail || err.error || '上传失败');
     }
 
+    statusEl.textContent = '上传视频完成';
     statusEl.innerHTML = '<span class="status-dot status-processing"></span>启动处理...';
 
     // Start processing

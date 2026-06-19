@@ -17,6 +17,7 @@ import subprocess
 import os
 
 import websockets
+from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
 
 from backend.config import settings
 
@@ -185,7 +186,7 @@ class VolcASRClient:
             while True:
                 try:
                     raw = await asyncio.wait_for(ws.recv(), timeout=30)
-                except asyncio.TimeoutError:
+                except (asyncio.TimeoutError, ConnectionClosedOK, ConnectionClosedError):
                     break
 
                 resp = self._parse_response(raw)
@@ -219,7 +220,7 @@ class VolcASRClient:
                                         all_utterances = u2
                                     if t2:
                                         full_text = t2
-                        except asyncio.TimeoutError:
+                        except (asyncio.TimeoutError, ConnectionClosedOK, ConnectionClosedError):
                             pass
                         break
 
