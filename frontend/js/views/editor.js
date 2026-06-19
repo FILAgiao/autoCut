@@ -25,7 +25,7 @@ function renderIdleMode(project, container) {
           <input type="file" id="video-input" accept="video/*" hidden>
           <span class="drop-icon">&#8682;</span>
           <span>拖拽视频到此处，或 <a href="#" id="video-browse">点击选择</a></span>
-          <span class="hint" style="margin-top:4px;">支持 MP4 / MOV / AVI，最大 500MB</span>
+          <span class="hint" style="margin-top:4px;">支持 MP4 / MOV / AVI 等常见格式</span>
         </div>
         <div id="clips-list" class="clips-list"></div>
         <div id="video-info" class="file-info hidden">
@@ -119,28 +119,48 @@ async function startEditorProcessing() {
   const file = window._selectedVideoFile;
   if (!file) return;
 
-  const script = document.getElementById('script-input').value;
+  const btnStart = document.getElementById('btn-start');
+  const statusEl = document.getElementById('upload-status');
+  btnStart.disabled = true;
+  btnStart.textContent = '处理中...';
 
-  // Save script to project
-  await fetch(`/api/projects/${_currentProjectId}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ script }),
-  });
+  try {
+    const script = document.getElementById('script-input').value;
 
-  // Upload clip
-  const formData = new FormData();
-  formData.append('video', file);
-  await fetch(`/api/projects/${_currentProjectId}/clips`, { method: 'POST', body: formData });
+    // Save script to project
+    statusEl.textContent = '保存脚本...';
+    await fetch(`/api/projects/${_currentProjectId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ script }),
+    });
 
-  document.getElementById('upload-status').innerHTML =
-    '<span class="status-dot status-processing"></span>正在启动处理...';
+    // Upload clip
+    statusEl.textContent = '上传视频...';
+    const formData = new FormData();
+    formData.append('video', file);
+    const uploadResp = await fetch(`/api/projects/${_currentProjectId}/clips`, { method: 'POST', body: formData });
+    if (!uploadResp.ok) {
+      const err = await uploadResp.json();
+      throw new Error(err.detail || err.error || '上传失败');
+    }
 
-  // Start processing
-  await fetch(`/api/projects/${_currentProjectId}/process`, { method: 'POST' });
+    statusEl.innerHTML = '<span class="status-dot status-processing"></span>启动处理...';
 
-  // Switch to processing mode
-  pollProjectStatus();
+    // Start processing
+    const processResp = await fetch(`/api/projects/${_currentProjectId}/process`, { method: 'POST' });
+    if (!processResp.ok) {
+      const err = await processResp.json();
+      throw new Error(err.error || '启动处理失败');
+    }
+
+    // Switch to processing mode
+    pollProjectStatus();
+  } catch (err) {
+    statusEl.innerHTML = `<span style="color:var(--error)">错误: ${err.message}</span>`;
+    btnStart.disabled = false;
+    btnStart.textContent = '开始处理';
+  }
 }
 
 /* ──── 处理中：进度轮询 ──── */

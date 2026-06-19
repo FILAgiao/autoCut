@@ -46,7 +46,7 @@ class Settings:
     PORT: int = int(os.getenv("PORT", "8520"))
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
     OUTPUT_DIR: str = os.getenv("OUTPUT_DIR", "./outputs")
-    MAX_VIDEO_SIZE_MB: int = int(os.getenv("MAX_VIDEO_SIZE_MB", "500"))
+    MAX_VIDEO_SIZE_MB: int = int(os.getenv("MAX_VIDEO_SIZE_MB", "0"))  # 0 = 不限制
 
 
 settings = Settings()
