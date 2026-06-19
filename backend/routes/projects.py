@@ -64,6 +64,8 @@ async def get_project_detail(project_id: str):
         "total_count": project.get("total_count", 0),
     }
 
+    response["pipeline_progress"] = project.get("pipeline_progress")
+
     result = project.get("result")
     if result and project.get("task_status") == "done":
         response.update({
@@ -151,6 +153,25 @@ async def start_processing(project_id: str, background_tasks: BackgroundTasks):
     return {"status": "processing", "task_id": project.get("task_id", project_id)}
 
 
+@router.post("/projects/{project_id}/retry")
+async def retry_processing(project_id: str):
+    """重置项目状态为 idle，清理旧的错误和结果"""
+    project = store.get_project(project_id)
+    if not project:
+        return JSONResponse({"error": "项目不存在"}, status_code=404)
+
+    store.update_project(
+        project_id,
+        task_status="idle",
+        result=None,
+        error=None,
+        pipeline_progress=None,
+        confirmed_count=0,
+        total_count=0,
+    )
+    return {"status": "idle"}
+
+
 async def run_pipeline(project_id: str):
     """后台处理管道：提取音频 → ASR → 对齐 → 分析"""
     project = store.get_project(project_id)
@@ -159,6 +180,26 @@ async def run_pipeline(project_id: str):
 
     task_id = project.get("task_id", project_id)
     script_text = project.get("script", "").strip()
+
+    # ── 初始化进度步骤 ──
+    _STEPS = [
+        {"name": "extract_audio", "label": "提取音频", "status": "pending", "percent": 0},
+        {"name": "asr", "label": "语音识别", "status": "pending", "percent": 0},
+        {"name": "align", "label": "语义对齐", "status": "pending", "percent": 0},
+        {"name": "analyze", "label": "智能分析", "status": "pending", "percent": 0},
+    ]
+
+    def _update_progress(step_name: str, status: str, percent: int | None = None):
+        for s in _STEPS:
+            if s["name"] == step_name:
+                s["status"] = status
+                if percent is not None:
+                    s["percent"] = percent
+                break
+        store.update_project(project_id, pipeline_progress={
+            "steps": _STEPS,
+            "current_step": step_name,
+        })
 
     try:
         from backend.services.media import extract_audio, get_video_info, check_ffmpeg
@@ -175,33 +216,37 @@ async def run_pipeline(project_id: str):
 
         video_path_str = str(video_path.resolve())
 
-        # Step 1: 获取视频信息
-        store.update_project(project_id, task_status="extracting_audio")
+        # Step 1: 提取音频
+        _update_progress("extract_audio", "processing", 50)
         video_info = get_video_info(video_path_str)
         video_duration = video_info["duration"]
 
-        # 更新 clip duration
         clips = project.get("clips", [])
         if clips:
             clips[0]["duration"] = video_duration
             store.update_project(project_id, clips=clips)
 
-        # Step 2: 提取音频
         audio_path = str(video_path.with_suffix(".m4a"))
         extract_audio(video_path_str, audio_path)
+        _update_progress("extract_audio", "done", 100)
 
-        # Step 3: ASR 流式识别
-        store.update_project(project_id, task_status="asr_processing")
+        # Step 2: ASR 流式识别
+        _update_progress("asr", "processing", 0)
+
+        def asr_progress_callback(pct: int):
+            _update_progress("asr", "processing", pct)
+
         client = VolcASRClient()
-        asr_result = await client.recognize(audio_path)
+        asr_result = await client.recognize(audio_path, on_progress=asr_progress_callback)
 
         if asr_result["status"] == "failed":
             raise RuntimeError(f"ASR 失败: {asr_result.get('error', '未知错误')}")
 
         segments = asr_result.get("segments", [])
+        _update_progress("asr", "done", 100)
 
-        # Step 4: LLM 语义对齐 或 无脚本聚类
-        store.update_project(project_id, task_status="aligning")
+        # Step 3: LLM 语义对齐 或 无脚本聚类
+        _update_progress("align", "processing", 50)
         from backend.services.script_parser import smart_split_script
         script_lines = smart_split_script(script_text)
         scriptless = len(script_lines) == 0
@@ -216,9 +261,10 @@ async def run_pipeline(project_id: str):
             aligner = LLMAligner()
             alignment = aligner.align(script_lines, segments)
             sentences, unmatched = align_result_to_model(script_lines, segments, alignment)
+        _update_progress("align", "done", 100)
 
-        # Step 5: 分析引擎
-        store.update_project(project_id, task_status="analyzing")
+        # Step 4: 分析引擎
+        _update_progress("analyze", "processing", 50)
         from backend.services.analyzers import run_all_analyzers, AnalysisContext
 
         all_segment_texts = [s.get("text", "") for s in segments]
@@ -291,6 +337,8 @@ async def run_pipeline(project_id: str):
                     for i, tag in enumerate(analysis.get("all_tags", []))
                 ]
 
+        _update_progress("analyze", "done", 100)
+
         # 保存结果到 project.json
         result_data = {
             "task_id": task_id,
@@ -344,6 +392,7 @@ async def get_project_status(project_id: str):
         "status": status,
         "confirmed_count": project.get("confirmed_count", 0),
         "total_count": project.get("total_count", 0),
+        "pipeline_progress": project.get("pipeline_progress"),
     }
 
     if status == "done":

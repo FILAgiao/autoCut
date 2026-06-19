@@ -1443,6 +1443,186 @@ body {
   font-weight: 400;
 }
 
+/* ====== Pipeline Progress ====== */
+
+/* Sidebar progress panel */
+.sidebar-progress {
+  padding: 16px 12px 8px;
+  border-top: 1px solid var(--border);
+  margin-top: 16px;
+}
+
+.sidebar-progress-header {
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  font-weight: 700;
+  padding: 0 8px 10px;
+}
+
+.sidebar-progress-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* Pipeline steps - shared by sidebar and editor */
+.pipeline-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 320px;
+  max-width: 440px;
+  width: 100%;
+}
+
+.progress-step {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  grid-template-rows: auto auto;
+  gap: 1px 10px;
+  align-items: center;
+  padding: 10px 12px;
+  position: relative;
+}
+
+/* Vertical connector line */
+.progress-step::before {
+  content: '';
+  position: absolute;
+  left: 27px;
+  top: 100%;
+  width: 2px;
+  height: calc(100% - 20px);
+  background: var(--border-light);
+}
+
+.progress-step:last-child::before {
+  display: none;
+}
+
+.progress-step.done::before {
+  background: var(--good);
+}
+
+.sidebar-progress-steps .progress-step {
+  padding: 6px 4px;
+  gap: 2px 8px;
+}
+
+.sidebar-progress-steps .progress-step::before {
+  left: 18px;
+  height: calc(100% - 14px);
+}
+
+/* Step icon */
+.progress-step-icon {
+  grid-row: 1 / 3;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.sidebar-progress-steps .progress-step-icon {
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+}
+
+.progress-step.done .progress-step-icon {
+  background: var(--good-soft);
+  color: var(--good);
+}
+
+.progress-step.processing .progress-step-icon {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.progress-step.pending .progress-step-icon {
+  background: var(--surface-elevated);
+  color: var(--text-dim);
+}
+
+.progress-step.error .progress-step-icon {
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+/* Step label */
+.progress-step-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.sidebar-progress-steps .progress-step-label {
+  font-size: 11px;
+}
+
+.progress-step.processing .progress-step-label {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.progress-step.done .progress-step-label {
+  color: var(--text-dim);
+}
+
+/* Step progress bar */
+.progress-step-bar {
+  grid-column: 2;
+  height: 4px;
+  background: var(--border-light);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-step-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.5s var(--ease);
+}
+
+.progress-step-pct {
+  grid-column: 2;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.sidebar-progress-steps .progress-step-bar,
+.sidebar-progress-steps .progress-step-pct {
+  display: none;
+}
+
+/* Spinner icon for active step */
+.spinner-icon {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--accent-soft);
+  border-top: 2px solid var(--accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+.sidebar-progress-steps .spinner-icon {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+}
+
 /* ====== Shortcut Bar ====== */
 #shortcut-bar {
   display: flex;
@@ -1572,6 +1752,7 @@ body {
   #project-layout { flex-direction: column; }
   #sidebar { width: 100% !important; height: auto; flex-shrink: 0; }
   #sidebar-nav { flex-direction: row !important; overflow-x: auto; }
+  #sidebar-progress { display: none; }
   #main-area { min-height: 70vh; }
 
   .project-card { min-width: 150px; }

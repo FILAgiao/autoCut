@@ -91,11 +91,13 @@ class VolcASRClient:
 
     # ──── 主流程 ────
 
-    async def recognize(self, audio_path: str) -> dict:
+    async def recognize(self, audio_path: str, on_progress=None) -> dict:
         """流式识别音频文件
 
         将本地音频通过 WebSocket 流式发送到火山引擎进行语音识别，
         无需公网 URL。
+
+        on_progress: 可选回调，接收 0-100 的百分比整数
 
         Returns:
             {"status": "success", "segments": [...], "full_text": "..."}
@@ -104,6 +106,8 @@ class VolcASRClient:
 
         with open(wav_path, 'rb') as f:
             audio_data = f.read()
+
+        total_bytes = len(audio_data)
 
         request_id = str(uuid.uuid4())
         headers = {
@@ -150,8 +154,10 @@ class VolcASRClient:
 
             # ── 2. 发送音频数据（分块，无序列号）──
             chunk_size = 6400  # 200ms @ 16kHz 16bit mono
-            for offset in range(0, len(audio_data), chunk_size):
+            bytes_sent = 0
+            for idx, offset in enumerate(range(0, len(audio_data), chunk_size)):
                 chunk = audio_data[offset:offset + chunk_size]
+                bytes_sent += len(chunk)
                 audio_header = self._build_header(
                     MSG_AUDIO_ONLY_REQUEST,
                     compression=COMPRESSION_NONE,
@@ -161,6 +167,10 @@ class VolcASRClient:
                 await ws.send(
                     audio_header + struct.pack('>I', len(chunk)) + chunk
                 )
+
+                if on_progress and idx % 5 == 0:
+                    pct = min(90, int(bytes_sent / total_bytes * 100))
+                    on_progress(pct)
 
             # ── 3. 发送结束包（与 test_streaming_all.py 完全一致）──
             last_header = self._build_header(

@@ -3,13 +3,14 @@
 let _pollTimer = null;
 
 function renderEditor(project, container) {
-  // Stop any existing poll
   if (_pollTimer) { clearTimeout(_pollTimer); _pollTimer = null; }
 
   if (project.task_status === 'done') {
     renderEditorMode(project, container);
   } else if (project.task_status === 'processing') {
     renderProcessingMode(project, container);
+  } else if (project.task_status === 'error') {
+    renderErrorMode(project, container);
   } else {
     renderIdleMode(project, container);
   }
@@ -173,8 +174,8 @@ async function startEditorProcessing() {
       throw new Error(err.error || '启动处理失败');
     }
 
-    // Switch to processing mode
-    pollProjectStatus();
+    // Trigger re-render to show processing mode (sidebar polling will handle progress)
+    await renderProject(_currentProjectId);
   } catch (err) {
     statusEl.innerHTML = `<span style="color:var(--error)">错误: ${err.message}</span>`;
     btnStart.disabled = false;
@@ -182,68 +183,63 @@ async function startEditorProcessing() {
   }
 }
 
-/* ──── 处理中：进度轮询 ──── */
+/* ──── 处理中：进度面板 ──── */
 function renderProcessingMode(project, container) {
+  const progress = project.pipeline_progress;
   container.innerHTML = `
     <div id="editor-processing" class="processing-view">
-      <div class="processing-spinner"></div>
       <h3>正在处理视频</h3>
-      <p id="processing-status-text">${getStatusText(project.task_status)}</p>
+      <div id="pipeline-steps" class="pipeline-steps">
+        ${progress ? renderProgressSteps(progress.steps) : '<div class="processing-spinner"></div>'}
+      </div>
     </div>
   `;
-  pollProjectStatus();
 }
 
-function getStatusText(status) {
-  const map = {
-    extracting_audio: '提取音频中...',
-    asr_processing: '语音识别中...',
-    aligning: '语义对齐中...',
-    analyzing: '分析质量中...',
-    processing: '处理中...',
-  };
-  return map[status] || status;
+/* ──── 处理失败：错误 + 重试 ──── */
+function renderErrorMode(project, container) {
+  container.innerHTML = `
+    <div class="processing-view">
+      <div style="font-size:48px;margin-bottom:16px;opacity:0.5;">&#10005;</div>
+      <h3>处理失败</h3>
+      <p style="color:var(--error);max-width:500px;text-align:center;margin-top:8px;">${escapeHtml(project.error_message || '未知错误')}</p>
+      <button id="btn-retry" class="btn-accent" style="margin-top:24px;">重新处理</button>
+    </div>
+  `;
+  document.getElementById('btn-retry').addEventListener('click', async () => {
+    await fetch(`/api/projects/${_currentProjectId}/retry`, { method: 'POST' });
+    await renderProject(_currentProjectId);
+  });
 }
 
-async function pollProjectStatus() {
-  if (!_currentProjectId) return;
-
-  try {
-    const resp = await fetch(`/api/projects/${_currentProjectId}/status`);
-    const data = await resp.json();
-
-    const statusEl = document.getElementById('processing-status-text');
-    if (statusEl) {
-      statusEl.textContent = getStatusText(data.status);
+/* ──── 进度步骤渲染（共享函数） ──── */
+function renderProgressSteps(steps) {
+  if (!steps) return '';
+  return steps.map(s => {
+    let icon, cls = s.status;
+    if (s.status === 'done') {
+      icon = '<svg width="16" height="16" viewBox="0 0 16 16"><polyline points="3,8 6.5,12 13,4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    } else if (s.status === 'processing') {
+      icon = '<span class="spinner-icon"></span>';
+    } else if (s.status === 'error') {
+      icon = '&#10005;';
+    } else {
+      icon = '&#8728;';
     }
 
-    if (data.status === 'done') {
-      // Restore STATE and render editor
-      STATE.taskId = data.task_id || _currentProjectId;
-      STATE.status = 'editing';
-      STATE.sentences = data.sentences || [];
-      STATE.unmatched = data.unmatched || [];
-      STATE.totalCount = data.total_count || STATE.sentences.length;
-      STATE.confirmedCount = data.confirmed_count || 0;
-      STATE.videoDuration = data.video_duration || 0;
-      STATE.currentSentence = 0;
-      STATE.currentTakeIndex = 0;
-      STATE.projectId = _currentProjectId;
+    const barHtml = s.status === 'processing'
+      ? `<div class="progress-step-bar"><div class="progress-step-fill" style="width:${s.percent}%"></div></div>
+         <span class="progress-step-pct">${s.percent}%</span>`
+      : (s.status === 'done'
+        ? ''
+        : '');
 
-      // Re-render project view with updated data
-      await renderProject(_currentProjectId);
-      return;
-    } else if (data.status === 'error') {
-      if (statusEl) {
-        statusEl.textContent = `处理失败: ${data.error_message || '未知错误'}`;
-      }
-      return;
-    }
-  } catch (err) {
-    // Retry
-  }
-
-  _pollTimer = setTimeout(pollProjectStatus, 2000);
+    return `<div class="progress-step ${cls}">
+      <span class="progress-step-icon">${icon}</span>
+      <span class="progress-step-label">${escapeHtml(s.label)}</span>
+      ${barHtml}
+    </div>`;
+  }).join('');
 }
 
 /* ──── 已完成：三栏编辑器 ──── */
