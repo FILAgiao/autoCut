@@ -25,7 +25,7 @@ async function renderHome() {
       <div class="modal-card">
         <h3>新建项目</h3>
         <input type="text" id="new-project-name" placeholder="项目名称" maxlength="100">
-        <textarea id="new-project-script" placeholder="粘贴口播脚本（可选）&#10;一句一行" rows="6"></textarea>
+        <textarea id="new-project-script" placeholder="粘贴口播脚本（可选），支持段落格式自动分句" rows="6"></textarea>
         <div class="modal-actions">
           <button id="btn-cancel-project">取消</button>
           <button id="btn-create-project">创建</button>

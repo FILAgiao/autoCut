@@ -105,12 +105,16 @@ async def update_project(project_id: str, data: dict):
 
 @router.post("/projects/{project_id}/clips")
 async def upload_clip(project_id: str, video: UploadFile = File(...)):
+    print(f"[upload_clip] project_id={project_id}, filename={video.filename}, content_type={video.content_type}")
     project = store.get_project(project_id)
     if not project:
+        print(f"[upload_clip] project not found: {project_id}")
         return JSONResponse({"error": "项目不存在"}, status_code=404)
 
     content = await video.read()
+    print(f"[upload_clip] read {len(content)} bytes")
     clip = store.save_clip(project_id, video.filename, content, video.filename)
+    print(f"[upload_clip] saved clip: {clip}")
     return clip
 
 
@@ -128,16 +132,20 @@ async def get_clip_video(project_id: str, clip_id: str):
 
 @router.post("/projects/{project_id}/process")
 async def start_processing(project_id: str, background_tasks: BackgroundTasks):
+    print(f"[start_processing] project_id={project_id}")
     project = store.get_project(project_id)
     if not project:
+        print(f"[start_processing] project not found: {project_id}")
         return JSONResponse({"error": "项目不存在"}, status_code=404)
 
     clips = project.get("clips", [])
+    print(f"[start_processing] clips count: {len(clips)}")
     if not clips:
         return JSONResponse({"error": "请先上传视频片段"}, status_code=400)
 
     project["task_status"] = "processing"
     store.update_project(project_id, task_status="processing", error=None)
+    print(f"[start_processing] starting pipeline for {project_id}")
 
     background_tasks.add_task(run_pipeline, project_id)
     return {"status": "processing", "task_id": project.get("task_id", project_id)}

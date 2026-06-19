@@ -85,7 +85,20 @@ function renderIdleMode(project, container) {
   const initCount = text ? text.split(/[。！？!?\n]+/).filter(l => l.trim()).length : 0;
   document.getElementById('script-line-count').textContent = `${initCount} 句`;
 
-  btnStart.addEventListener('click', () => startEditorProcessing());
+  if (btnStart) {
+    btnStart.addEventListener('click', () => startEditorProcessing());
+  } else {
+    console.warn('[renderIdleMode] btnStart is null, retrying with setTimeout');
+    setTimeout(() => {
+      const btn = document.getElementById('btn-start');
+      if (btn) {
+        btn.addEventListener('click', () => startEditorProcessing());
+        console.log('[renderIdleMode] btnStart bound via setTimeout');
+      } else {
+        console.error('[renderIdleMode] btnStart still null after setTimeout');
+      }
+    }, 0);
+  }
 
   checkEditorStartReady();
 }
@@ -116,11 +129,17 @@ function checkEditorStartReady() {
 }
 
 async function startEditorProcessing() {
+  console.log('[startEditorProcessing] called, _currentProjectId:', _currentProjectId);
+
   const file = window._selectedVideoFile;
-  if (!file) return;
+  if (!file) {
+    console.warn('[startEditorProcessing] no video file selected');
+    return;
+  }
 
   const btnStart = document.getElementById('btn-start');
   const statusEl = document.getElementById('upload-status');
+  console.log('[startEditorProcessing] btnStart found:', !!btnStart, 'statusEl found:', !!statusEl);
   btnStart.disabled = true;
   btnStart.textContent = '处理中...';
 

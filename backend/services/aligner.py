@@ -35,7 +35,7 @@ from backend.config import settings
 
 ALIGNMENT_PROMPT = """你是一个文本对齐专家。请将语音识别结果匹配到对应的脚本句子。
 
-【脚本文本】（一句一行，编号从0开始）
+【脚本文本】（每句一行，按句号感叹号问号分句，编号从0开始）
 {script_lines}
 
 【语音识别结果】（每个段落有编号、时间戳和文本）
