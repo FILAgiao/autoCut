@@ -28,9 +28,9 @@ def export_jianying_draft(result: ProcessResult, video_path: str, subtitle_style
         import pyJianYingDraft as draft
         from pyJianYingDraft import tim, trange, SEC
 
-        # 创建脚本
+        # 创建脚本 (新版API: width, height, fps, maintrack_adsorb)
         w, h = settings.OUTPUT_WIDTH, settings.OUTPUT_HEIGHT
-        script = draft.Script_file(w, h)
+        script = draft.ScriptFile(w, h, 30.0, True)
 
         # ──── 视频轨 ────
         video_mat = draft.Video_material(video_path)
@@ -54,21 +54,29 @@ def export_jianying_draft(result: ProcessResult, video_path: str, subtitle_style
         # ──── 字幕轨 ────
         script.add_track(draft.Track_type.text, track_name="字幕")
 
-        # 字幕样式
+        # 映射字体到剪映 FontType
+        font_type = _map_font(style.font)
+        keyword_font_type = _map_font_bold(style.font)
+
+        # 字幕样式（新版API: size代替font_size, color是tuple）
         color = _hex_to_rgb(style.color)
         stroke_color = _hex_to_rgb(style.stroke_color)
-        stroke_width = style.stroke_width
-        font = style.font
         max_chars = style.max_chars
         pos_y = style.position_y
 
-        text_style = draft.Text_style(
-            font=font,
-            font_size=h * settings.SUBTITLE_SIZE_RATIO,
+        text_style = draft.TextStyle(
+            size=h * settings.SUBTITLE_SIZE_RATIO,
             color=(color[0], color[1], color[2]),
-            stroke_color=(stroke_color[0], stroke_color[1], stroke_color[2]),
-            stroke_width=stroke_width,
             align=1,  # 居中
+        )
+
+        # 关键词强调样式
+        keyword_color_rgb = _hex_to_rgb(style.keyword_color)
+        keyword_style = draft.TextStyle(
+            size=h * settings.SUBTITLE_SIZE_RATIO * 1.05,
+            color=(keyword_color_rgb[0], keyword_color_rgb[1], keyword_color_rgb[2]),
+            align=1,
+            bold=True,
         )
 
         subtitle_time_us = 0
@@ -78,18 +86,19 @@ def export_jianying_draft(result: ProcessResult, video_path: str, subtitle_style
 
             # 拆分为短字幕
             short_lines = _split_to_short_lines(take.text, max_chars)
-
             sub_duration = dur_sec / len(short_lines) if short_lines else dur_sec
 
             for i, line in enumerate(short_lines):
-                seg = draft.Text_segment(
+                segment_start_us = subtitle_time_us + i * int(sub_duration * SEC)
+                segment_start_s = segment_start_us / 1e6
+
+                # 单个文本片段（剪映文本轨道不支持同时间重叠，统一样式）
+                seg = draft.TextSegment(
                     line,
-                    trange(
-                        tim(f"{(subtitle_time_us + i * int(sub_duration * SEC)) / 1e6}s"),
-                        tim(f"{sub_duration}s"),
-                    ),
+                    trange(tim(f"{segment_start_s}s"), tim(f"{sub_duration}s")),
+                    font=font_type,
                     style=text_style,
-                    clip_settings=draft.Clip_settings(transform_y=pos_y),
+                    clip_settings=draft.ClipSettings(transform_y=pos_y),
                 )
                 script.add_segment(seg, "字幕")
 
@@ -253,6 +262,91 @@ def _get_confirmed_sorted(result: ProcessResult) -> list[ScriptSentence]:
     return sorted(confirmed, key=lambda s: s.takes[s.confirmed_take_index].start)
 
 
+def _split_by_keywords(text: str) -> list[dict]:
+    """将文本按关键词拆分，返回 [{text, is_keyword, char_count}]"""
+    # 和前端 keyword.js 保持一致的关键词模式
+    KEYWORD_DOUBLE = [
+        '非常','超级','绝对','一定','必须','真的','极其','尤其','格外','万分','十分','相当',
+        '但是','可是','然而','不过','所以','因此','因为','虽然','如果','那么',
+        '而且','并且','或者','然后','接着','于是','否则','总之','其实','当然','毕竟','反正',
+        '甚至','除非','只要','只有','无论',
+    ]
+    KEYWORD_SINGLE = ['很','最','更','超']
+
+    import re
+    # 匹配数字（含单位）
+    num_pattern = re.compile(r'\d+(?:\.\d+)?[万亿千百]?')
+    # 匹配英文
+    en_pattern = re.compile(r'[a-zA-Z]+')
+
+    results = []
+    pos = 0
+    while pos < len(text):
+        # 先尝试匹配双字关键词
+        matched = False
+        for kw in KEYWORD_DOUBLE:
+            if text.startswith(kw, pos):
+                results.append({'text': kw, 'is_keyword': True, 'char_count': len(kw)})
+                pos += len(kw)
+                matched = True
+                break
+        if matched:
+            continue
+
+        # 单字强调词
+        for kw in KEYWORD_SINGLE:
+            if text.startswith(kw, pos):
+                results.append({'text': kw, 'is_keyword': True, 'char_count': 1})
+                pos += len(kw)
+                matched = True
+                break
+        if matched:
+            continue
+
+        # 数字
+        m = num_pattern.match(text, pos)
+        if m:
+            results.append({'text': m.group(), 'is_keyword': True, 'char_count': len(m.group())})
+            pos = m.end()
+            continue
+
+        # 英文
+        m = en_pattern.match(text, pos)
+        if m:
+            word = m.group()
+            results.append({'text': word, 'is_keyword': True, 'char_count': max(1, len(word) // 2)})
+            pos = m.end()
+            continue
+
+        # 普通字符：取到下一个可能的关键词位置
+        remaining = text[pos:]
+        next_pos = len(remaining)
+        # 找下一个双字关键词位置
+        for kw in KEYWORD_DOUBLE:
+            idx = remaining.find(kw)
+            if 0 < idx < next_pos:
+                next_pos = idx
+        # 找下一个数字/英文/单字关键词
+        for pattern in [num_pattern, en_pattern]:
+            m = pattern.search(remaining)
+            if m and 0 < m.start() < next_pos:
+                next_pos = m.start()
+        for kw in KEYWORD_SINGLE:
+            idx = remaining.find(kw)
+            if 0 < idx < next_pos:
+                next_pos = idx
+
+        if next_pos > 0 and next_pos < len(remaining):
+            segment = remaining[:next_pos]
+            results.append({'text': segment, 'is_keyword': False, 'char_count': len(segment)})
+            pos += next_pos
+        else:
+            results.append({'text': remaining, 'is_keyword': False, 'char_count': len(remaining)})
+            pos = len(text)
+
+    return results
+
+
 def _split_to_short_lines(text: str, max_chars: int) -> list[str]:
     """
     将长句拆分为短字幕
@@ -323,3 +417,39 @@ def _hex_to_rgb(hex_color: str) -> tuple[float, ...]:
 def _hex_to_rgb_list(hex_color: str) -> list[float]:
     """#FFFFFF → [1.0, 1.0, 1.0]"""
     return list(_hex_to_rgb(hex_color))
+
+
+def _map_font(font_name: str):
+    """用户字体名 → 剪映 FontType"""
+    try:
+        from pyJianYingDraft import FontType
+    except ImportError:
+        return None
+    mapping = {
+        'Source Han Sans SC': FontType.SourceHanSansCN_Regular,
+        'Source Han Serif SC': FontType.SourceHanSerifCN_Regular,
+        'Microsoft YaHei': FontType.SourceHanSansCN_Regular,
+        'PingFang SC': FontType.SourceHanSansCN_Regular,
+        'SimHei': FontType.SourceHanSansCN_Bold,
+        'KaiTi': FontType.SourceHanSerifCN_Light,
+        'Arial': FontType.SourceSansPro_Regular,
+    }
+    return mapping.get(font_name, FontType.SourceHanSansCN_Regular)
+
+
+def _map_font_bold(font_name: str):
+    """用户字体名 → 剪映 FontType（加粗版）"""
+    try:
+        from pyJianYingDraft import FontType
+    except ImportError:
+        return None
+    mapping = {
+        'Source Han Sans SC': FontType.SourceHanSansCN_Bold,
+        'Source Han Serif SC': FontType.SourceHanSerifCN_Bold,
+        'Microsoft YaHei': FontType.SourceHanSansCN_Bold,
+        'PingFang SC': FontType.SourceHanSansCN_Bold,
+        'SimHei': FontType.SourceHanSansCN_Bold,
+        'KaiTi': FontType.SourceHanSerifCN_SemiBold,
+        'Arial': FontType.SourceSansPro_Regular,
+    }
+    return mapping.get(font_name, FontType.SourceHanSansCN_Bold)
