@@ -18,10 +18,19 @@ _EXE_SUFFIX = ".exe" if sys.platform == "win32" else ""
 
 def _find_ffmpeg() -> str:
     """自动检测 ffmpeg 路径"""
+    # 优先使用包装脚本（处理剪映内置 ffmpeg 的 rpath 和签名问题）
+    local_ffmpeg = os.path.expanduser("~/.local/bin/ffmpeg")
+    if os.path.exists(local_ffmpeg):
+        return local_ffmpeg
+
+    if sys.platform == "darwin":
+        vf_path = "/Applications/VideoFusion-macOS.app/Contents/Resources/ffmpeg"
+        if os.path.exists(vf_path):
+            return vf_path
+
     known_dirs = []
     if sys.platform == "win32":
         home = os.path.expanduser("~")
-        # 剪映自带 ffmpeg (没有 ffprobe)
         jianying_base = Path.home() / "AppData" / "Local" / "JianyingPro" / "Apps"
         if jianying_base.exists():
             versions = sorted(
@@ -45,6 +54,14 @@ def _find_ffmpeg() -> str:
 
 def _find_ffprobe() -> str:
     """自动检测 ffprobe 路径（独立于 ffmpeg）"""
+    # 优先使用包装脚本
+    local_ffprobe = os.path.expanduser("~/.local/bin/ffprobe")
+    if os.path.exists(local_ffprobe):
+        return local_ffprobe
+
+    if sys.platform == "darwin":
+        return _FFMPEG if _FFMPEG != "ffmpeg" else "ffprobe"
+
     known_dirs = []
     if sys.platform == "win32":
         home = os.path.expanduser("~")

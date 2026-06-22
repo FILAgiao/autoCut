@@ -17,6 +17,7 @@ const STATE = {
   totalCount: 0,
 
   previewActive: false,
+  takeSortMode: 'grade',  // 'grade' = 按评级排序, 'time' = 按时间排序
 };
 
 /* ──── 字幕设置存储 ──── */
@@ -27,8 +28,10 @@ const SUBTITLE_DEFAULTS = {
   strokeColor: '#000000',
   strokeWidth: 0.04,
   positionY: -0.75,
-  keywordColor: '#FFD700',
+  keywordColor: '#FFD700',       // 导出时的关键词颜色
+  reviewKeywordColor: '#FFD700', // 审阅时的关键词颜色（独立设置）
   maxChars: 12,
+  showDuringReview: true,        // 审阅时显示字幕
 };
 
 function loadSubtitleSettings() {
@@ -44,6 +47,22 @@ function saveSubtitleSettings(settings) {
 }
 
 let subtitleSettings = loadSubtitleSettings();
+
+/* ──── 关键词覆盖（全局共享） ──── */
+window._keywordOverrides = {};
+
+(function loadKeywordOverrides() {
+  try {
+    const saved = localStorage.getItem('autocut-keyword-overrides');
+    if (saved) window._keywordOverrides = JSON.parse(saved);
+  } catch (e) {}
+})();
+
+function saveKeywordOverridesGlobal() {
+  try {
+    localStorage.setItem('autocut-keyword-overrides', JSON.stringify(window._keywordOverrides));
+  } catch (e) {}
+}
 
 /* ──── 主题切换 ──── */
 function loadTheme() {
@@ -135,6 +154,12 @@ function renderScriptList() {
     list.innerHTML = '<div style="padding:16px;color:var(--text-dim);font-size:13px;">无脚本数据，请在右侧查看未匹配片段</div>';
     return;
   }
+  const matchedCount = STATE.sentences.filter(s => s.takes.length > 0).length;
+  const totalCount = STATE.sentences.length;
+  const label = document.getElementById('script-mode-label');
+  if (label) {
+    label.innerHTML = `脚本行 <span class="script-match-count">${matchedCount}/${totalCount} 已录制</span>`;
+  }
   list.innerHTML = STATE.sentences.map((s, i) => {
     const grade = s.confirmed_take_index >= 0
       ? s.takes[s.confirmed_take_index]?.grade || ''
@@ -147,9 +172,9 @@ function renderScriptList() {
     ].join(' ');
     const gradeColor = gradeToCSS(grade);
     const dot = grade ? `<span class="script-gradedot" style="background:${gradeColor}"></span>` : '';
-    const noTakesIcon = s.takes.length === 0 ? ' !' : '';
+    const noTakesBadge = s.takes.length === 0 ? '<span class="no-takes-badge">未录制</span>' : '';
     return `<div class="${cls}" data-index="${i}" onclick="selectSentence(${i})">
-      ${dot}${truncate(s.text, 20)}${noTakesIcon}
+      ${dot}${escapeHtml(s.text)}${noTakesBadge}
     </div>`;
   }).join('');
 }
@@ -171,20 +196,54 @@ function renderTakesList() {
     return;
   }
 
-  list.innerHTML = sent.takes.map((t, i) => {
-    const gradeCls = t.is_abandoned ? 'abandoned'
-      : (sent.confirmed_take_index === i ? 'confirmed'
-      : (i === STATE.currentTakeIndex ? 'active' : ''));
+  // Sort takes according to current sort mode
+  const _gradeOrder = { 'A': 0, 'B': 1, 'C': 2, 'D': 3, '废': 4, '': 5 };
+  let sorted = [...sent.takes];
+  let indexMap = {}; // sortedIndex → originalIndex
+  if (STATE.takeSortMode === 'time') {
+    sorted.sort((a, b) => a.start - b.start);
+  } else {
+    // grade mode: A > B > C > D > 废, abandoned at bottom
+    sorted.sort((a, b) => {
+      const abandonDiff = (a.is_abandoned ? 1 : 0) - (b.is_abandoned ? 1 : 0);
+      if (abandonDiff !== 0) return abandonDiff;
+      const gradeDiff = (_gradeOrder[a.grade] || 5) - (_gradeOrder[b.grade] || 5);
+      if (gradeDiff !== 0) return gradeDiff;
+      return (b.grade_score || 0) - (a.grade_score || 0);
+    });
+  }
+  // Build map: for each sorted position, what was the original index in sent.takes
+  sorted.forEach((t, si) => {
+    const origIdx = sent.takes.findIndex(ot =>
+      ot.start === t.start && ot.text === t.text && ot.index === t.index
+    );
+    indexMap[si] = origIdx >= 0 ? origIdx : si;
+  });
+
+  // Find sorted index of currentTakeIndex
+  const currentOrigIdx = STATE.currentTakeIndex;
+  let currentSortedIdx = 0;
+  for (let si = 0; si < sorted.length; si++) {
+    if (indexMap[si] === currentOrigIdx) { currentSortedIdx = si; break; }
+  }
+
+  list.innerHTML = sorted.map((t, si) => {
+    const origIdx = indexMap[si];
+    const gradeCls = [
+      si === currentSortedIdx ? 'active' : '',
+      sent.confirmed_take_index === origIdx ? 'confirmed' : '',
+      t.is_abandoned ? 'abandoned' : '',
+    ].filter(Boolean).join(' ');
     const gradeIcon = gradeToIcon(t.grade);
     const tagsHtml = (t.tags || []).map(tag =>
       `<span class="tag tag-${tag.severity}">${tag.label}</span>`
     ).join('');
     const gradeBadgeCls = t.grade ? `grade-${t.grade === '废' ? 'W' : t.grade}` : '';
 
-    return `<div class="take-item ${gradeCls}" data-index="${i}"
-         onclick="selectTake(${i})" ondblclick="editorConfirm()">
+    return `<div class="take-item ${gradeCls}" data-index="${si}" data-orig="${origIdx}"
+         onclick="selectTake(${origIdx})" ondblclick="editorConfirm()">
       <span class="take-grade-icon">${gradeIcon}</span>
-      <span>第${i+1}遍 ${formatTime(t.start)}-${formatTime(t.end)}</span>
+      <span>第${origIdx+1}遍 ${formatTime(t.start)}-${formatTime(t.end)}</span>
       <span class="take-meta">
         <span>${formatDuration(t.duration)}</span>
         <span>置信${(t.confidence*100).toFixed(0)}%</span>
@@ -268,13 +327,10 @@ function selectSentence(index) {
 
   renderAll();
   if (sent.takes.length > 0) {
-    seekToCurrentTake();
-    // 自动播放选中片段
-    const video = document.getElementById('video-player');
+    // 片段循环播放：只在当前 take 的时间范围内循环
     const t = sent.takes[STATE.currentTakeIndex];
-    if (video && t) {
-      video.currentTime = t.start;
-      video.play().catch(() => {});
+    if (t && typeof playSegment === 'function') {
+      playSegment(t.start, t.end);
     }
   }
 }
@@ -287,12 +343,11 @@ function selectTake(index) {
   renderTakesList();
   updateTakeInfo();
   updateEditorSubtitle();
-  seekToCurrentTake();
-  // 自动播放当前片段
-  const video = document.getElementById('video-player');
-  if (video) {
-    video.currentTime = sent.takes[index].start;
-    video.play().catch(() => {});
+  if (typeof updateKeywordEditor === 'function') updateKeywordEditor();
+  // 片段循环播放：只在当前 take 的时间范围内循环
+  const t = sent.takes[index];
+  if (t && typeof playSegment === 'function') {
+    playSegment(t.start, t.end);
   }
 }
 
@@ -357,6 +412,16 @@ function initEditorSubtitleCanvas() {
 }
 
 function updateEditorSubtitle() {
+  // 审阅模式下不显示字幕
+  if (!subtitleSettings.showDuringReview) {
+    const canvas = document.getElementById('subtitle-canvas');
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    return;
+  }
+
   const canvas = document.getElementById('subtitle-canvas');
   const video = document.getElementById('video-player');
   if (!canvas || !video) return;
@@ -398,8 +463,11 @@ function updateEditorSubtitle() {
   const yPos = canvas.height * (1 + s.positionY);
   const text = currentTake.text;
 
+  const aiKw = (currentTake && currentTake.keywords && currentTake.keywords.length)
+    ? currentTake.keywords
+    : null;
   const tokens = typeof getKeywordTokens === 'function'
-    ? getKeywordTokens(text, s.keywordColor, s.keywordColor)
+    ? getKeywordTokens(text, s.reviewKeywordColor || s.keywordColor, s.reviewKeywordColor || s.keywordColor, aiKw)
     : [{ word: text, isKeyword: false, type: null, color: null }];
 
   const fontFamily = `"${s.font}", "Microsoft YaHei", "PingFang SC", sans-serif`;

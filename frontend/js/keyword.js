@@ -14,6 +14,9 @@ const KEYWORD_TYPES = {
   transition: { label: '转折', color: '#4ECDC4' },
   english: { label: '英文', color: '#A78BFA' },
   quote: { label: '引语', color: '#F97316' },
+  proper_noun: { label: '专名', color: '#38BDF8' },
+  content: { label: '关键', color: '#FB923C' },
+  key_number: { label: '大数', color: '#FACC15' },
 };
 
 function detectKeywords(text) {
@@ -94,7 +97,47 @@ function detectKeywords(text) {
   return results;
 }
 
-function getKeywordTokens(text, keywordColor, emphasizeColor) {
+function getKeywordTokens(text, keywordColor, emphasizeColor, aiKeywords) {
+  // If AI keywords are provided, use them; otherwise fall back to regex
+  if (aiKeywords && aiKeywords.length > 0) {
+    const kwSet = new Map(aiKeywords.map(k => [k.word, k.type || 'keyword']));
+    const results = [];
+    // Walk through text and mark AI-detected keywords
+    let pos = 0;
+    while (pos < text.length) {
+      let matched = false;
+      // Check each AI keyword at current position
+      for (const [word, type] of kwSet) {
+        if (text.startsWith(word, pos)) {
+          const color = type === 'emphasis'
+            ? (emphasizeColor || '#FF6B6B')
+            : (keywordColor || '#FFD700');
+          results.push({ word, isKeyword: true, type, color });
+          pos += word.length;
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        // Find next keyword start position
+        let nextPos = text.length;
+        for (const [word] of kwSet) {
+          const idx = text.indexOf(word, pos);
+          if (idx >= pos && idx < nextPos) nextPos = idx;
+        }
+        if (nextPos > pos) {
+          results.push({ word: text.substring(pos, nextPos), isKeyword: false, type: null });
+          pos = nextPos;
+        } else {
+          results.push({ word: text.substring(pos), isKeyword: false, type: null });
+          pos = text.length;
+        }
+      }
+    }
+    return results;
+  }
+
+  // Regex fallback
   const detected = detectKeywords(text);
   return detected.map(d => ({
     ...d,

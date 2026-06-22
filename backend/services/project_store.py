@@ -8,12 +8,16 @@ projects/
     └── exports/        # 导出产物
 """
 
+from __future__ import annotations
+
 import json
 import uuid
 import shutil
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
+
+from backend.services.media import _FFMPEG, _FFPROBE
 
 PROJECTS_DIR = Path("projects")
 
@@ -107,44 +111,47 @@ def delete_project(project_id: str) -> bool:
 
 
 def save_clip(project_id: str, filename: str, content: bytes, original_name: str = "") -> dict:
-    """保存视频片段到项目的 clips/ 目录，返回 clip 信息"""
+    """保存视频片段到项目的 clips/ 目录，返回 clip 信息
+
+    原始文件保留不动（导出剪映草稿用高质量原片）。
+    同时生成一个 H.264 预览文件（浏览器播放用，参数从低保证兼容即可）。
+    """
     _ensure_dir()
     d = _project_dir(project_id)
     clips_dir = d / "clips"
     clips_dir.mkdir(parents=True, exist_ok=True)
 
-    # 生成唯一文件名
+    # 生成唯一文件名（排除 preview 文件，只数原始文件）
     ext = Path(filename).suffix or ".mp4"
-    existing = list(clips_dir.glob(f"clip_*{ext}"))
+    existing = [p for p in clips_dir.glob(f"clip_*{ext}") if "_preview" not in p.stem]
     clip_idx = len(existing) + 1
     clip_filename = f"clip_{clip_idx:03d}{ext}"
+    preview_filename = f"clip_{clip_idx:03d}_preview.mp4"
     clip_path = clips_dir / clip_filename
     clip_path.write_bytes(content)
 
-    # 转码 + faststart: 确保浏览器兼容 (H.264, 1080p max, moov在前)
-    import subprocess, shutil
+    # 生成浏览器预览文件 (H.264 + faststart + 1080p max, 低质量快速编码)
+    import subprocess
+    preview_path = clips_dir / preview_filename
     try:
-        tmp_path = clip_path.with_suffix('.transcoded.mp4')
         result = subprocess.run([
-            'ffmpeg', '-i', str(clip_path),
-            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+            _FFMPEG, '-i', str(clip_path),
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28',
             '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease',
-            '-c:a', 'aac', '-b:a', '128k',
+            '-c:a', 'aac', '-b:a', '96k',
             '-movflags', '+faststart',
-            '-y', str(tmp_path)
+            '-y', str(preview_path)
         ], capture_output=True, timeout=300)
-        if tmp_path.exists() and tmp_path.stat().st_size > 1000:
-            tmp_path.replace(clip_path)
-        else:
-            tmp_path.unlink(missing_ok=True)
+        if not (preview_path.exists() and preview_path.stat().st_size > 1000):
+            preview_path.unlink(missing_ok=True)
     except Exception:
-        pass  # 转码失败不阻塞上传，保留原文件
+        pass  # 转码失败不阻塞上传，前端回退用原始文件
 
-    # 获取真实视频时长
+    # 获取原始视频时长
     duration = 0
     try:
         result = subprocess.run([
-            'ffprobe', '-v', 'quiet', '-show_entries', 'format=duration',
+            _FFPROBE, '-v', 'quiet', '-show_entries', 'format=duration',
             '-of', 'csv=p=0', str(clip_path)
         ], capture_output=True, text=True, timeout=10)
         duration = float(result.stdout.strip() or 0)
@@ -155,6 +162,7 @@ def save_clip(project_id: str, filename: str, content: bytes, original_name: str
     clip_info = {
         "id": clip_id,
         "filename": clip_filename,
+        "preview_filename": preview_filename if preview_path.exists() else None,
         "original_name": original_name or filename,
         "duration": duration,
         "file_size": clip_path.stat().st_size,
@@ -171,9 +179,21 @@ def save_clip(project_id: str, filename: str, content: bytes, original_name: str
 
 
 def get_clip_path(project_id: str, filename: str) -> Path | None:
-    """通过文件名获取 clips/ 下的完整路径（检查文件真实存在）"""
+    """通过文件名获取 clips/ 下的原始文件路径（导出用）"""
     p = _project_dir(project_id) / "clips" / filename
     return p if p.exists() else None
+
+
+def get_preview_path(project_id: str, filename: str, preview_filename: str | None = None) -> Path | None:
+    """获取预览文件路径，不存在时回退到原始文件"""
+    clips_dir = _project_dir(project_id) / "clips"
+    if preview_filename:
+        preview_path = clips_dir / preview_filename
+        if preview_path.exists():
+            return preview_path
+    # 回退到原始文件
+    original = clips_dir / filename
+    return original if original.exists() else None
 
 
 def clip_exists(project_id: str, filename: str) -> bool:

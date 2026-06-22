@@ -25,7 +25,6 @@ async function renderHome() {
       <div class="modal-card">
         <h3>新建项目</h3>
         <input type="text" id="new-project-name" placeholder="项目名称" maxlength="100">
-        <textarea id="new-project-script" placeholder="粘贴口播脚本（可选），支持段落格式自动分句" rows="6"></textarea>
         <div class="modal-actions">
           <button id="btn-cancel-project">取消</button>
           <button id="btn-create-project">创建</button>
@@ -116,24 +115,30 @@ async function loadProjectList() {
 
 function showNewProjectModal() {
   document.getElementById('new-project-modal').classList.remove('hidden');
-  document.getElementById('new-project-name').focus();
+  const input = document.getElementById('new-project-name');
+  input.focus();
+  // 回车直接创建
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      createNewProject();
+    }
+  };
 }
 
 function hideNewProjectModal() {
   document.getElementById('new-project-modal').classList.add('hidden');
   document.getElementById('new-project-name').value = '';
-  document.getElementById('new-project-script').value = '';
 }
 
 async function createNewProject() {
   const name = document.getElementById('new-project-name').value.trim() || '未命名项目';
-  const script = document.getElementById('new-project-script').value.trim();
 
   try {
     const resp = await fetch('/api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, script }),
+      body: JSON.stringify({ name }),
     });
     const project = await resp.json();
     hideNewProjectModal();

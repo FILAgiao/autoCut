@@ -1,5 +1,7 @@
 """上传路由 - 视频 + 脚本上传，触发后台处理"""
 
+from __future__ import annotations
+
 import uuid
 import time
 import asyncio

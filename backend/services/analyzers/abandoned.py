@@ -10,12 +10,14 @@ class AbandonedAnalyzer(BaseAnalyzer):
     name = "abandoned"
     priority = 5  # 最先跑
 
-    # 放弃信号词
-    ABANDON_PHRASES = [
-        "算了", "重来", "不录了", "NG", "过吧", "废了",
-        "不行", "再来", "重新来", "再来一遍", "重录",
-        "不好", "不对", "错了", "说错了", "嘴瓢了",
+    # 强信号词：几乎一定表示废片
+    STRONG_ABANDON = [
+        "重来", "重新来", "再来一遍", "重录", "不录了",
+        "NG", "过吧", "废了", "说错了", "嘴瓢了",
     ]
+
+    # 弱信号词：可能出现在正常语句中，需额外条件
+    WEAK_ABANDON = ["算了", "不行", "再来", "不好", "不对", "错了"]
 
     # 叹气词
     SIGH_WORDS = {"唉", "哎", "害", "嗨"}
@@ -35,11 +37,23 @@ class AbandonedAnalyzer(BaseAnalyzer):
 
         # 1. 检测放弃关键词
         text_lower = text.lower()
-        for phrase in self.ABANDON_PHRASES:
+        # 强信号：几乎一定废片
+        for phrase in self.STRONG_ABANDON:
             if phrase in text_lower:
                 reasons.append(f"含放弃词「{phrase}」")
                 is_abandoned = True
                 break
+        # 弱信号：需要额外条件（短文本 或 出现在句首）
+        if not is_abandoned:
+            for phrase in self.WEAK_ABANDON:
+                pos = text_lower.find(phrase)
+                if pos >= 0:
+                    text_short = len(text.strip()) < 15
+                    at_start = pos <= 3
+                    if text_short or at_start:
+                        reasons.append(f"含放弃词「{phrase}」")
+                        is_abandoned = True
+                        break
 
         # 2. 检测句子不完整（不以正常结束符收尾）
         if not is_abandoned and len(text.strip()) > 5:

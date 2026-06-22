@@ -168,7 +168,12 @@ function getProjectStatusText(project) {
   if (status === 'done') {
     const confirmed = project.confirmed_count || 0;
     const total = project.total_count || 0;
-    return total ? `已确认 ${confirmed} / ${total}` : '已处理';
+    const sentences = project.sentences || [];
+    const unmatched = sentences.filter(s => !s.takes || s.takes.length === 0).length;
+    const parts = [];
+    if (total) parts.push(`已确认 ${confirmed} / ${total}`);
+    if (unmatched > 0) parts.push(`${unmatched} 句未录制`);
+    return parts.length ? parts.join(' · ') : '已处理';
   }
   if (status === 'error') return '处理失败';
   if (status === 'processing') {

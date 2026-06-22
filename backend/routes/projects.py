@@ -1,5 +1,7 @@
 """项目路由 - CRUD + 处理管道 + 状态轮询 + 确认/拒掉 + 导出"""
 
+from __future__ import annotations
+
 import time
 import asyncio
 from pathlib import Path
@@ -132,7 +134,8 @@ async def get_clip_video(project_id: str, clip_id: str):
     clip = next((c for c in project.get("clips", []) if c["id"] == clip_id), None)
     if not clip:
         return JSONResponse({"error": "视频片段不存在"}, status_code=404)
-    path = store.get_clip_path(project_id, clip["filename"])
+    # 优先返回预览文件（浏览器兼容），不存在时回退到原始文件
+    path = store.get_preview_path(project_id, clip["filename"], clip.get("preview_filename"))
     if not path:
         return JSONResponse({"error": "视频片段文件不存在"}, status_code=404)
     return FileResponse(str(path))
@@ -150,10 +153,17 @@ async def delete_clip(project_id: str, clip_id: str):
     if not clip:
         return JSONResponse({"error": "视频片段不存在"}, status_code=404)
 
-    # Delete file from disk
+    # Delete original file from disk
     clip_path = store.get_clip_path(project_id, clip["filename"])
     if clip_path and clip_path.exists():
         clip_path.unlink()
+
+    # Delete preview file from disk (if exists)
+    preview_filename = clip.get("preview_filename")
+    if preview_filename:
+        preview_path = Path("projects") / project_id / "clips" / preview_filename
+        if preview_path.exists():
+            preview_path.unlink()
 
     # Remove from project
     clips = [c for c in clips if c["id"] != clip_id]
@@ -221,18 +231,25 @@ async def run_pipeline(project_id: str):
 
     # ── 初始化进度步骤 ──
     _STEPS = [
-        {"name": "extract_audio", "label": "提取音频", "status": "pending", "percent": 0},
-        {"name": "asr", "label": "语音识别", "status": "pending", "percent": 0},
-        {"name": "align", "label": "语义对齐", "status": "pending", "percent": 0},
-        {"name": "analyze", "label": "智能分析", "status": "pending", "percent": 0},
+        {"name": "extract_audio",  "label": "提取音频",     "status": "pending", "percent": 0, "message": ""},
+        {"name": "asr_connect",    "label": "连接识别服务", "status": "pending", "percent": 0, "message": ""},
+        {"name": "asr_send",       "label": "发送音频数据", "status": "pending", "percent": 0, "message": ""},
+        {"name": "asr_wait",       "label": "等待识别结果", "status": "pending", "percent": 0, "message": ""},
+        {"name": "correct_text",   "label": "智能纠错",     "status": "pending", "percent": 0, "message": ""},
+        {"name": "merge_sentences","label": "语句归并",     "status": "pending", "percent": 0, "message": ""},
+        {"name": "align",          "label": "语义对齐",     "status": "pending", "percent": 0, "message": ""},
+        {"name": "analyze",        "label": "智能分析",     "status": "pending", "percent": 0, "message": ""},
+        {"name": "keywords",       "label": "关键词检测",   "status": "pending", "percent": 0, "message": ""},
     ]
 
-    def _update_progress(step_name: str, status: str, percent: int | None = None):
+    def _update_progress(step_name: str, status: str, percent: int | None = None, message: str | None = None):
         for s in _STEPS:
             if s["name"] == step_name:
                 s["status"] = status
                 if percent is not None:
                     s["percent"] = percent
+                if message is not None:
+                    s["message"] = message
                 break
         store.update_project(project_id, pipeline_progress={
             "steps": _STEPS,
@@ -255,7 +272,7 @@ async def run_pipeline(project_id: str):
         video_path_str = str(video_path.resolve())
 
         # Step 1: 提取音频
-        _update_progress("extract_audio", "processing", 50)
+        _update_progress("extract_audio", "processing", 50, "正在用 ffmpeg 提取音频...")
         video_info = get_video_info(video_path_str)
         video_duration = video_info["duration"]
 
@@ -266,25 +283,87 @@ async def run_pipeline(project_id: str):
 
         audio_path = str(video_path.with_suffix(".m4a"))
         extract_audio(video_path_str, audio_path)
-        _update_progress("extract_audio", "done", 100)
+        _update_progress("extract_audio", "done", 100, "音频提取完成")
 
-        # Step 2: ASR 流式识别
-        _update_progress("asr", "processing", 0)
+        # Step 2: ASR 流式识别（拆分为连接→发送→等待）
+        _update_progress("asr_connect", "processing", 50, "正在连接火山引擎识别服务...")
 
-        def asr_progress_callback(pct: int):
-            _update_progress("asr", "processing", pct)
+        def asr_progress_callback(pct: int, msg: str = None):
+            mb_sent = pct * 0.01 * (video_duration * 16000 * 2 / 1024 / 1024) if video_duration else 0
+            display_msg = msg or f"已发送 {pct}% (约 {mb_sent:.1f}MB)"
+            _update_progress("asr_send", "processing", pct, display_msg)
 
         client = VolcASRClient()
+        _update_progress("asr_connect", "done", 100, "已连接到识别服务")
+
+        _update_progress("asr_send", "processing", 0, "开始发送音频数据...")
+
+        # 更新 asr_send 的 progress callback 以支持 message
+        async def recognize_with_progress():
+            # 包装原 callback，让它可以传 message
+            original = client.recognize
+            async def wrapper(audio, on_progress=None):
+                def progress_wrapper(pct):
+                    if on_progress:
+                        on_progress(pct)
+                return await original.__wrapped__(audio, on_progress=progress_wrapper) if hasattr(original, '__wrapped__') else await original(audio, on_progress=asr_progress_callback)
+            return await wrapper(audio_path, on_progress=asr_progress_callback)
+
         asr_result = await client.recognize(audio_path, on_progress=asr_progress_callback)
 
         if asr_result["status"] == "failed":
             raise RuntimeError(f"ASR 失败: {asr_result.get('error', '未知错误')}")
 
         segments = asr_result.get("segments", [])
-        _update_progress("asr", "done", 100)
+        full_text = asr_result.get("full_text", "")
+        _update_progress("asr_send", "done", 100, f"已发送全部音频数据")
+
+        _update_progress("asr_wait", "processing", 80, "正在等待识别结果返回...")
+        await asyncio.sleep(0.5)  # 短暂停让用户看到等待状态
+        _update_progress("asr_wait", "done", 100, f"识别完成，共 {len(segments)} 个片段")
+
+        # Step 2.5: LLM 文本纠错
+        corrected_full_text = None
+        _update_progress("correct_text", "processing", 30, "正在用大模型检查错别字...")
+        try:
+            from backend.services.text_corrector import correct_transcript, apply_corrections_to_segments
+            corrected_text = await correct_transcript(full_text)
+            if corrected_text and len(corrected_text.strip()) > len(full_text) * 0.5:
+                full_text = corrected_text
+                corrected_full_text = corrected_text
+                # 将纠正后的文本映射回各个片段
+                apply_corrections_to_segments(segments, corrected_text)
+                _update_progress("correct_text", "done", 100, "纠错完成")
+            else:
+                _update_progress("correct_text", "done", 100, "无需纠错")
+        except Exception:
+            _update_progress("correct_text", "done", 100, "纠错跳过（LLM 不可用）")
+
+        # Step 2.6: LLM 语句归并（含重复句分组）
+        _alt_map = {}  # 原始片段文本 → 同句的其他尝试
+        _update_progress("merge_sentences", "processing", 30, "正在用大模型归并碎片语句...")
+        try:
+            from backend.services.sentence_merger import merge_segments
+            merged = await merge_segments(segments)
+            if merged and len(merged) > 0:
+                # 提取同句其他尝试（半句、重讲、补录），稍后在对齐后补充为 take
+                for seg in merged:
+                    alts = seg.pop("_alternatives", None)
+                    if alts:
+                        _alt_map[seg["text"]] = alts
+                segments = merged
+                alt_count = sum(len(v) for v in _alt_map.values())
+                msg = f"归并完成，共 {len(segments)} 个句子"
+                if alt_count:
+                    msg += f"（含 {alt_count} 个重复尝试已归组）"
+                _update_progress("merge_sentences", "done", 100, msg)
+            else:
+                _update_progress("merge_sentences", "done", 100, "无需归并")
+        except Exception:
+            _update_progress("merge_sentences", "done", 100, "归并跳过（LLM 不可用）")
 
         # Step 3: LLM 语义对齐 或 无脚本聚类
-        _update_progress("align", "processing", 50)
+        _update_progress("align", "processing", 30, "正在请求大模型进行语义对齐...")
         from backend.services.script_parser import smart_split_script
         script_lines = smart_split_script(script_text)
         scriptless = len(script_lines) == 0
@@ -299,16 +378,45 @@ async def run_pipeline(project_id: str):
             aligner = LLMAligner()
             alignment = aligner.align(script_lines, segments)
             sentences, unmatched = align_result_to_model(script_lines, segments, alignment)
-        _update_progress("align", "done", 100)
+
+        matched_count = len([s for s in sentences if s.takes])
+        _update_progress("align", "done", 100, f"已匹配 {matched_count}/{len(script_lines)} 句")
+
+        # 将对齐结果中匹配到的句子的备用 takes（半句、重讲、补录）展开
+        if _alt_map:
+            for sent in sentences:
+                extra_takes = []
+                for take in sent.takes:
+                    alts = _alt_map.get(take.text)
+                    if alts:
+                        for alt in alts:
+                            extra_takes.append(AnalyzedTake(
+                                index=len(sent.takes) + len(extra_takes),
+                                text=alt["text"],
+                                start=alt["start"],
+                                end=alt["end"],
+                                duration=round(alt["end"] - alt["start"], 2),
+                                confidence=alt.get("confidence", 0.0),
+                            ))
+                if extra_takes:
+                    sent.takes.extend(extra_takes)
 
         # Step 4: 分析引擎
-        _update_progress("analyze", "processing", 50)
+        _update_progress("analyze", "processing", 0, "开始智能分析...")
         from backend.services.analyzers import run_all_analyzers, AnalysisContext
 
         all_segment_texts = [s.get("text", "") for s in segments]
+        total_takes = sum(len(sent.takes) for sent in sentences)
+        processed_takes = 0
 
         for sent in sentences:
             for take_idx, take in enumerate(sent.takes):
+                processed_takes += 1
+                # 每处理一个 take 更新进度
+                _update_progress("analyze", "processing",
+                    int(processed_takes / total_takes * 100) if total_takes else 50,
+                    f"正在分析第 {processed_takes}/{total_takes} 个片段...")
+
                 seg_idx = None
                 if alignment:
                     for match in alignment.get("matches", []):
@@ -375,13 +483,70 @@ async def run_pipeline(project_id: str):
                     for i, tag in enumerate(analysis.get("all_tags", []))
                 ]
 
-        _update_progress("analyze", "done", 100)
+        _update_progress("analyze", "done", 100, f"分析完成，共处理 {total_takes} 个片段")
+
+        # AI 关键词检测：用 LLM 识别专有名词、重点词、大数字等
+        _update_progress("keywords", "running", 0, "正在用 AI 识别重点词...")
+        try:
+            from backend.services.keyword_detector import detect_keywords_llm, detect_keywords_sync
+
+            # Collect text from best take of each sentence
+            keyword_texts = []
+            keyword_map = []  # [(sent_idx, take_idx), ...]
+            for si, sent in enumerate(sentences):
+                best = _find_best_take_idx(sent)
+                if best >= 0:
+                    keyword_texts.append(sent.takes[best].text)
+                    keyword_map.append((si, best))
+
+            if keyword_texts:
+                # Try LLM detection first, fall back to regex
+                ai_keywords = None
+                try:
+                    from openai import OpenAI
+                    _update_progress("keywords", "running", 30, "LLM 分析中...")
+                    llm_client = OpenAI(
+                        base_url=settings.LLM_API_BASE,
+                        api_key=settings.LLM_API_KEY,
+                    )
+                    ai_keywords = await detect_keywords_llm(keyword_texts, llm_client)
+                    _update_progress("keywords", "running", 80, "LLM 关键词检测完成")
+                except Exception as e_llm:
+                    _log.warning(f"[keywords] LLM detection failed, using regex: {e_llm}")
+                    ai_keywords = detect_keywords_sync(keyword_texts)
+
+                if ai_keywords:
+                    for (si, ti), kws in zip(keyword_map, ai_keywords):
+                        if kws:
+                            sentences[si].takes[ti].keywords = kws
+                            _log.info(f"[keywords] S{si} take{ti}: {kws}")
+            _update_progress("keywords", "done", 100, f"关键词检测完成")
+        except Exception as e_key:
+            _log.warning(f"[keywords] detection failed: {e_key}")
+            _update_progress("keywords", "done", 100, f"关键词检测跳过")
+
+        # 每个句子内的 take 按质量排序：A > B > C > D > 废，同级按分数降序
+        _grade_order = {'A': 0, 'B': 1, 'C': 2, 'D': 3, '废': 4, '': 5}
+        for sent in sentences:
+            sent.takes.sort(key=lambda t: (
+                1 if t.is_abandoned else 0,                # 废片排最后
+                _grade_order.get(t.grade, 5),              # 按等级排序
+                -(t.grade_score or 0),                     # 同级按分数降序
+            ))
+            # 更新 index 字段以匹配新顺序
+            for i, take in enumerate(sent.takes):
+                take.index = i
+            # 如果已确认，更新 confirmed_take_index 指向新位置
+            if sent.confirmed_take_index >= 0:
+                # confirmed_take_index 存储的是旧 index，通过寻找同名 take 来重新确认位置
+                sent.confirmed_take_index = -1  # 分析阶段尚未确认，保持 -1
 
         # 保存结果到 project.json
         result_data = {
             "task_id": task_id,
             "status": "done",
             "video_duration": video_duration,
+            "full_text": corrected_full_text or full_text,
             "sentences": [s.model_dump() for s in sentences],
             "unmatched": [u.model_dump() for u in unmatched],
             "confirmed_count": 0,

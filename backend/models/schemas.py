@@ -1,5 +1,8 @@
 """Pydantic 数据模型"""
 
+from __future__ import annotations
+from typing import Optional
+
 from pydantic import BaseModel
 from enum import Enum
 
@@ -41,6 +44,7 @@ class AnalyzedTake(BaseModel):
     tags: list[AnalysisTag] = []
     is_abandoned: bool = False    # 是否废片
     abandon_reason: str = ""
+    keywords: list[dict] = []     # AI 检测的关键词 [{word, type}, ...]
 
 
 class ScriptSentence(BaseModel):
@@ -102,7 +106,7 @@ class ExportOptions(BaseModel):
     include_srt: bool = True
     include_draft: bool = True
     include_text_guide: bool = False
-    subtitle_style: SubtitleStyle | None = None
+    subtitle_style: Optional[SubtitleStyle] = None
 
 
 # ──── 状态 ────

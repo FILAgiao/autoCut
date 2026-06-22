@@ -94,17 +94,6 @@ function navigateTake(direction) {
   if (!sent || !sent.takes.length) return;
 
   let nextIdx = STATE.currentTakeIndex + direction;
-
-  if (direction > 0) {
-    while (nextIdx < sent.takes.length && sent.takes[nextIdx].is_abandoned) {
-      nextIdx++;
-    }
-  } else {
-    while (nextIdx >= 0 && sent.takes[nextIdx].is_abandoned) {
-      nextIdx--;
-    }
-  }
-
   if (nextIdx < 0 || nextIdx >= sent.takes.length) return;
 
   selectTake(nextIdx);
@@ -115,14 +104,8 @@ function quickSelect(index) {
   const sent = STATE.sentences[STATE.currentSentence];
   if (!sent || index >= sent.takes.length) return;
 
-  const validTakes = sent.takes.filter(t => !t.is_abandoned);
-  if (index < validTakes.length) {
-    const realIndex = sent.takes.indexOf(validTakes[index]);
-    if (realIndex >= 0) {
-      selectTake(realIndex);
-      playCurrentTake();
-    }
-  }
+  selectTake(index);
+  playCurrentTake();
 }
 
 function undoConfirm() {

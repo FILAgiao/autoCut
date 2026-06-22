@@ -1,5 +1,7 @@
 """导出服务 - 剪映草稿 + SRT + 剪辑清单"""
 
+from __future__ import annotations
+
 import os
 import re
 from pathlib import Path
@@ -349,51 +351,91 @@ def _split_by_keywords(text: str) -> list[dict]:
 
 def _split_to_short_lines(text: str, max_chars: int) -> list[str]:
     """
-    将长句拆分为短字幕
-    优先在标点处拆分，其次按字数拆分
+    将长句拆分为短视频字幕（短句，适合大字体显示）。
+
+    拆分策略（针对竖屏 9:16 短视频优化）：
+    1. 首先在句末标点处强制断开：。！？!?\n
+    2. 然后在逗号/分号等停顿处断开：，、；：,;:
+    3. 如果停顿处拆分后仍超长，按 max_chars 硬切
+    4. 标点附加到前一行末尾，保证阅读自然
     """
     text = text.strip()
-    if len(text) <= max_chars:
+    if not text:
         return [text]
 
-    # 标点拆分位置
-    punctuations = r"[，。！？、；：,\.!\?;:]"
-    parts = re.split(f"({punctuations})", text)
+    # Step 1: 先在句末标点处断开
+    sentence_breaks = r"([。！？!?\n])"
+    segments = re.split(sentence_breaks, text)
+
+    # 重新合并：标点附加到前一个片段
+    raw_sentences = []
+    buf = ""
+    for seg in segments:
+        if re.match(r"^[。！？!?\n]+$", seg):
+            buf += seg
+            raw_sentences.append(buf)
+            buf = ""
+        else:
+            if buf:
+                raw_sentences.append(buf)
+            buf = seg
+    if buf:
+        raw_sentences.append(buf)
+
+    # Step 2: 在每个句段内，按逗号/分号等进一步拆分
+    minor_breaks = r"([，、；：,;:])"
+    effective_max = max(6, max_chars)  # 至少 6 字，保证不会切太碎
 
     lines = []
-    current = ""
-    for part in parts:
-        if re.match(punctuations, part):
-            # 标点附加到当前行
-            if len(current) + len(part) <= max_chars:
-                current += part
+    for sentence in raw_sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+
+        if len(sentence) <= effective_max:
+            lines.append(sentence)
+            continue
+
+        # 按次要停顿拆分
+        parts = re.split(minor_breaks, sentence)
+        current = ""
+        for part in parts:
+            if re.match(r"^[，、；：,;:]+$", part):
+                # 停顿标点附加到当前行
+                if current and len(current) + len(part) <= effective_max:
+                    current += part
+                else:
+                    if current:
+                        lines.append(current)
+                    current = part.lstrip("，、；：,;:")
             else:
-                if current:
-                    lines.append(current)
-                current = part
-        else:
-            if len(current) + len(part) <= max_chars:
-                current += part
-            else:
-                if current:
-                    lines.append(current)
-                # 如果单个片段超过限制，按字数切
-                while len(part) > max_chars:
-                    lines.append(part[:max_chars])
-                    part = part[max_chars:]
-                current = part
+                combined = current + part
+                if len(combined) <= effective_max:
+                    current = combined
+                else:
+                    if current:
+                        lines.append(current)
+                    # 如果单个片段超长，按字数切
+                    while len(part) > effective_max:
+                        # 尽量在 effective_max 附近断开
+                        lines.append(part[:effective_max])
+                        part = part[effective_max:]
+                    current = part
 
-    if current:
-        lines.append(current)
+        if current:
+            lines.append(current)
 
-    # 如果没拆开（没有标点），按字数均分
-    if len(lines) == 1 and len(lines[0]) > max_chars:
-        text = lines[0]
-        n = (len(text) + max_chars - 1) // max_chars
-        chunk_size = (len(text) + n - 1) // n
-        lines = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+    # Step 3: 如果没拆开（无标点长句），按字数均分
+    if len(lines) == 1 and len(lines[0]) > effective_max:
+        t = lines[0]
+        n = (len(t) + effective_max - 1) // effective_max
+        chunk_size = (len(t) + n - 1) // n
+        lines = [t[i:i + chunk_size] for i in range(0, len(t), chunk_size)]
 
-    return lines
+    # Step 4: 过滤空行和纯标点行
+    lines = [l.strip() for l in lines if l.strip() and not re.match(r'^[，。！？、；：,\.!\?;:\s]+$', l.strip())]
+
+    return lines if lines else [text]
 
 
 def _srt_time(seconds: float) -> str:

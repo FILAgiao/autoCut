@@ -124,7 +124,7 @@ class VolcASRClient:
 
         async with websockets.connect(
             WS_URL,
-            additional_headers=headers,
+            extra_headers=headers,
             ping_interval=20,
             ping_timeout=10,
             max_size=10 * 1024 * 1024,

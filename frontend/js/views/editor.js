@@ -304,17 +304,22 @@ function renderProgressSteps(steps) {
       icon = '&#8728;';
     }
 
+    const messageHtml = s.message
+      ? `<span class="progress-step-msg">${escapeHtml(s.message)}</span>`
+      : '';
+
     const barHtml = s.status === 'processing'
       ? `<div class="progress-step-bar"><div class="progress-step-fill" style="width:${s.percent}%"></div></div>
          <span class="progress-step-pct">${s.percent}%</span>`
       : (s.status === 'done'
-        ? ''
+        ? (s.message ? '' : '')
         : '');
 
     return `<div class="progress-step ${cls}">
       <span class="progress-step-icon">${icon}</span>
       <span class="progress-step-label">${escapeHtml(s.label)}</span>
       ${barHtml}
+      ${messageHtml}
     </div>`;
   }).join('');
 }
@@ -360,14 +365,36 @@ function renderEditorMode(project, container) {
             <button id="btn-confirm" title="Enter">&#10003; 确认</button>
             <button id="btn-reject" title="R">&#10005; 拒掉</button>
           </div>
+          <div id="review-subtitle-bar" class="review-subtitle-bar">
+            <label class="review-sub-toggle" title="切换字幕显示">
+              <input type="checkbox" id="chk-show-subtitle" ${subtitleSettings.showDuringReview ? 'checked' : ''}>
+              <span>字幕</span>
+            </label>
+            <div class="review-sub-color" title="审阅时关键词高亮颜色">
+              <label>关键词色</label>
+              <input type="color" id="review-keyword-color" value="${subtitleSettings.reviewKeywordColor || subtitleSettings.keywordColor}">
+            </div>
+          </div>
         </main>
         <aside id="takes-panel">
           <button class="panel-toggle" id="toggle-takes-panel" title="折叠面板">▶</button>
           <div id="current-sentence-label"></div>
+          <div id="takes-sort-bar" class="takes-sort-bar">
+            <button id="btn-sort-grade" class="sort-btn sort-active" title="按评级排序">评级</button>
+            <button id="btn-sort-time" class="sort-btn" title="按时间排序">时间</button>
+          </div>
           <div id="takes-list"></div>
           <div id="unmatched-panel" class="hidden">
             <h3>未匹配片段</h3>
             <div id="unmatched-list"></div>
+          </div>
+          <div id="keyword-editor-panel" class="keyword-editor-panel collapsed">
+            <button class="kw-editor-toggle" id="btn-toggle-kw-editor" title="展开/折叠关键词编辑">
+              <span id="kw-editor-toggle-icon">▶</span> 关键词
+            </button>
+            <div id="kw-editor-body" class="kw-editor-body hidden">
+              <div id="kw-editor-list" class="kw-editor-list"></div>
+            </div>
           </div>
         </aside>
       </div>
@@ -416,8 +443,59 @@ function renderEditorMode(project, container) {
   document.getElementById('btn-confirm').addEventListener('click', () => editorConfirm());
   document.getElementById('btn-reject').addEventListener('click', () => editorReject());
 
+  // Subtitle visibility toggle
+  const chkShow = document.getElementById('chk-show-subtitle');
+  if (chkShow) {
+    chkShow.addEventListener('change', () => {
+      subtitleSettings.showDuringReview = chkShow.checked;
+      saveSubtitleSettings(subtitleSettings);
+      updateEditorSubtitle();
+    });
+  }
+  // Review keyword color
+  const kwColor = document.getElementById('review-keyword-color');
+  if (kwColor) {
+    kwColor.addEventListener('input', () => {
+      subtitleSettings.reviewKeywordColor = kwColor.value;
+      saveSubtitleSettings(subtitleSettings);
+      updateEditorSubtitle();
+    });
+  }
+
   // Panel toggles
   setupPanelToggles();
+
+  // Sort toggle
+  const btnSortGrade = document.getElementById('btn-sort-grade');
+  const btnSortTime = document.getElementById('btn-sort-time');
+  if (btnSortGrade && btnSortTime) {
+    btnSortGrade.addEventListener('click', () => {
+      STATE.takeSortMode = 'grade';
+      btnSortGrade.classList.add('sort-active');
+      btnSortTime.classList.remove('sort-active');
+      renderTakesList();
+    });
+    btnSortTime.addEventListener('click', () => {
+      STATE.takeSortMode = 'time';
+      btnSortTime.classList.add('sort-active');
+      btnSortGrade.classList.remove('sort-active');
+      renderTakesList();
+    });
+  }
+
+  // Keyword editor toggle
+  const kwToggle = document.getElementById('btn-toggle-kw-editor');
+  const kwBody = document.getElementById('kw-editor-body');
+  const kwIcon = document.getElementById('kw-editor-toggle-icon');
+  const kwPanel = document.getElementById('keyword-editor-panel');
+  if (kwToggle && kwBody && kwIcon && kwPanel) {
+    kwToggle.addEventListener('click', () => {
+      const collapsed = kwBody.classList.toggle('hidden');
+      kwPanel.classList.toggle('collapsed', collapsed);
+      kwIcon.textContent = collapsed ? '▶' : '▼';
+      if (!collapsed) updateKeywordEditor();
+    });
+  }
 
   // Restore confirmed state
   for (const s of STATE.sentences) {
@@ -513,8 +591,10 @@ async function editorReject() {
 function updateEditorProgress() {
   const count = STATE.sentences.filter(s => s.confirmed_take_index >= 0).length;
   STATE.confirmedCount = count;
-  document.getElementById('progress-text').textContent =
-    `已确认 ${count} / ${STATE.totalCount}`;
+  const unmatched = STATE.sentences.filter(s => !s.takes || s.takes.length === 0).length;
+  const parts = [`已确认 ${count} / ${STATE.totalCount}`];
+  if (unmatched > 0) parts.push(`${unmatched} 句未录制`);
+  document.getElementById('progress-text').textContent = parts.join(' · ');
 }
 
 function setupPanelToggles() {
@@ -535,4 +615,83 @@ function setupPanelToggles() {
     btn.textContent = takesPanel.classList.contains('collapsed') ? '◀' : '▶';
     if (typeof drawTimeline === 'function') setTimeout(drawTimeline, 350);
   });
+}
+
+/* ──── 关键词编辑器（审阅时编辑当前片段关键词） ──── */
+
+function updateKeywordEditor() {
+  const list = document.getElementById('kw-editor-list');
+  if (!list) return;
+
+  const sent = STATE.sentences[STATE.currentSentence];
+  if (!sent || !sent.takes || !sent.takes.length) {
+    list.innerHTML = '<div class="kw-editor-empty">请先选择一个片段</div>';
+    return;
+  }
+
+  const take = sent.takes[STATE.currentTakeIndex] || sent.takes[0];
+  if (!take || !take.text) {
+    list.innerHTML = '<div class="kw-editor-empty">无文本</div>';
+    return;
+  }
+
+  const tokens = typeof getKeywordTokens === 'function'
+    ? getKeywordTokens(take.text, '#FFD700', '#FF6B6B')
+    : [];
+
+  if (!tokens.filter(t => t.isKeyword).length) {
+    list.innerHTML = '<div class="kw-editor-empty">未检测到关键词<br><small style="color:var(--text-dim)">切换片段或句子查看</small></div>';
+    return;
+  }
+
+  const sentIdx = sent.index;
+  list.innerHTML = tokens.map((t, i) => {
+    if (!t.isKeyword) return '';
+    const overrideKey = `${sentIdx}:${t.word}`;
+    const enabled = typeof window._keywordOverrides !== 'undefined' && window._keywordOverrides.hasOwnProperty(overrideKey)
+      ? _keywordOverrides[overrideKey] !== false
+      : true;
+    const cls = enabled ? 'kw-btn-on' : 'kw-btn-off';
+    const typeLabel = t.type && typeof KEYWORD_TYPES !== 'undefined' && KEYWORD_TYPES[t.type]
+      ? KEYWORD_TYPES[t.type].label : (t.type || '?');
+    return `<button class="kw-edit-btn ${cls}"
+            data-word="${escapeHtml(t.word)}"
+            data-sentence="${sentIdx}"
+            data-index="${i}"
+            title="${typeLabel}: 点击切换高亮">
+      <span class="kw-edit-dot" style="background:${t.color || '#FFD700'}"></span>
+      ${escapeHtml(t.word)}
+    </button>`;
+  }).filter(Boolean).join('');
+
+  // Bind toggle clicks
+  list.querySelectorAll('.kw-edit-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const word = btn.dataset.word;
+      const sIdx = parseInt(btn.dataset.sentence);
+      toggleEditorKeyword(sIdx, word, btn);
+    });
+  });
+}
+
+function toggleEditorKeyword(sentIdx, word, btn) {
+  if (typeof window._keywordOverrides === 'undefined') {
+    window._keywordOverrides = {};
+  }
+  const overrides = window._keywordOverrides;
+  const key = `${sentIdx}:${word}`;
+  if (overrides[key] === undefined) {
+    overrides[key] = false;
+  } else if (overrides[key] === false) {
+    overrides[key] = true;
+  } else {
+    overrides[key] = false;
+  }
+
+  saveKeywordOverridesGlobal();
+
+  btn.classList.toggle('kw-btn-on', overrides[key] !== false);
+  btn.classList.toggle('kw-btn-off', overrides[key] === false);
+
+  if (typeof updateEditorSubtitle === 'function') updateEditorSubtitle();
 }
